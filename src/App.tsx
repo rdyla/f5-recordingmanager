@@ -145,15 +145,17 @@ const App: React.FC = () => {
         </span>
       </header>
 
-      <main className="flex-1 px-6 py-4 space-y-4">
-        {/* Filters */}
-        <section className="bg-slate-900/60 border border-slate-800 rounded-2xl p-4 space-y-4">
+      <main className="flex-1 px-4 py-6">
+        <div className="max-w-5xl mx-auto space-y-4">
+          <section className="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 space-y-4 shadow-lg shadow-slate-950/40">
+            {/* filters */}
           <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-4">
             <div className="flex flex-col gap-1">
               <label className="text-xs text-slate-400">From</label>
               <input
                 type="date"
-                className="bg-slate-950 border border-slate-700 rounded-lg px-2 py-1 text-sm"
+                className="bg-slate-900/70 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder:text-slate-400 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
+
                 value={from}
                 onChange={(e) => setFrom(e.target.value)}
               />
@@ -163,7 +165,8 @@ const App: React.FC = () => {
               <label className="text-xs text-slate-400">To</label>
               <input
                 type="date"
-                className="bg-slate-950 border border-slate-700 rounded-lg px-2 py-1 text-sm"
+                className="bg-slate-900/70 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder:text-slate-400 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
+
                 value={to}
                 onChange={(e) => setTo(e.target.value)}
               />
@@ -172,7 +175,8 @@ const App: React.FC = () => {
             <div className="flex flex-col gap-1">
               <label className="text-xs text-slate-400">Recording type</label>
               <select
-                className="bg-slate-950 border border-slate-700 rounded-lg px-2 py-1 text-sm"
+                className="bg-slate-900/70 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder:text-slate-400 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
+
                 value={recordingType}
                 onChange={(e) =>
                   setRecordingType(e.target.value as typeof recordingType)
@@ -187,7 +191,8 @@ const App: React.FC = () => {
             <div className="flex flex-col gap-1">
               <label className="text-xs text-slate-400">Query date type</label>
               <select
-                className="bg-slate-950 border border-slate-700 rounded-lg px-2 py-1 text-sm"
+               className="bg-slate-900/70 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder:text-slate-400 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
+
                 value={queryDateType}
                 onChange={(e) =>
                   setQueryDateType(e.target.value as typeof queryDateType)
@@ -204,7 +209,8 @@ const App: React.FC = () => {
                 type="number"
                 min={1}
                 max={300}
-                className="bg-slate-950 border border-slate-700 rounded-lg px-2 py-1 text-sm"
+                className="bg-slate-900/70 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder:text-slate-400 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
+
                 value={pageSize}
                 onChange={(e) => setPageSize(Number(e.target.value) || 30)}
               />
@@ -239,7 +245,8 @@ const App: React.FC = () => {
         </section>
 
         {/* Table */}
-        <section className="bg-slate-900/60 border border-slate-800 rounded-2xl p-4">
+    <section className="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 shadow-lg shadow-slate-950/40">
+      {/* table */}
           {loading && !recordings.length ? (
             <div className="text-sm text-slate-400">Loading recordings…</div>
           ) : !recordings.length ? (
