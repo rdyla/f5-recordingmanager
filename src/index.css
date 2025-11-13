@@ -9,34 +9,3 @@ body {
   background-color: #020617; /* slate-950 */
   color: #e5e7eb;
 }
-
-/* Fallbacks to ensure key classes behave even if Tailwind is picky */
-.bg-slate-900 {
-  background-color: #020617 !important;
-}
-
-.border-slate-700 {
-  border-color: #374151 !important;
-}
-
-.text-slate-100 {
-  color: #f3f4f6 !important;
-}
-
-.w-32 {
-  width: 8rem !important;
-}
-
-.w-64 {
-  width: 16rem !important;
-}
-
-.max-w-xs {
-  max-width: 20rem !important;
-}
-
-input[type="date"],
-input[type="number"],
-select {
-  box-sizing: border-box;
-}
