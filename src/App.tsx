@@ -148,99 +148,98 @@ const App: React.FC = () => {
         <div className="max-w-5xl mx-auto space-y-4">
           {/* Filters */}
           <section className="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 space-y-4 shadow-lg shadow-slate-950/40">
-            <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-4">
-              <div className="flex flex-col gap-1">
-                <label className="text-xs text-slate-400">From</label>
-                <input
-                  type="date"
-                  className="block w-64 max-w-xs bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder:text-slate-400 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
-                  value={from}
-                  onChange={(e) => setFrom(e.target.value)}
-                />
-              </div>
+  {/* Filters row */}
+  <div className="flex flex-wrap items-end gap-4">
+    <div className="flex flex-col gap-1 w-64">
+      <label className="text-xs text-slate-400">From</label>
+      <input
+        type="date"
+        className="block w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder:text-slate-400 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
+        value={from}
+        onChange={(e) => setFrom(e.target.value)}
+      />
+    </div>
 
-              <div className="flex flex-col gap-1">
-                <label className="text-xs text-slate-400">To</label>
-                <input
-                  type="date"
-                  className="block w-64 max-w-xs bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder:text-slate-400 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
-                  value={to}
-                  onChange={(e) => setTo(e.target.value)}
-                />
-              </div>
+    <div className="flex flex-col gap-1 w-64">
+      <label className="text-xs text-slate-400">To</label>
+      <input
+        type="date"
+        className="block w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder:text-slate-400 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
+        value={to}
+        onChange={(e) => setTo(e.target.value)}
+      />
+    </div>
 
-              <div className="flex flex-col gap-1">
-                <label className="text-xs text-slate-400">Recording type</label>
-                <select
-                  className="block w-64 max-w-xs bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
-                  value={recordingType}
-                  onChange={(e) =>
-                    setRecordingType(e.target.value as typeof recordingType)
-                  }
-                >
-                  <option value="All">All</option>
-                  <option value="Automatic">Automatic</option>
-                  <option value="OnDemand">OnDemand</option>
-                </select>
-              </div>
+    <div className="flex flex-col gap-1 w-64">
+      <label className="text-xs text-slate-400">Recording type</label>
+      <select
+        className="block w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
+        value={recordingType}
+        onChange={(e) =>
+          setRecordingType(e.target.value as typeof recordingType)
+        }
+      >
+        <option value="All">All</option>
+        <option value="Automatic">Automatic</option>
+        <option value="OnDemand">OnDemand</option>
+      </select>
+    </div>
 
-              <div className="flex flex-col gap-1">
-                <label className="text-xs text-slate-400">
-                  Query date type
-                </label>
-                <select
-                  className="block w-64 max-w-xs bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
-                  value={queryDateType}
-                  onChange={(e) =>
-                    setQueryDateType(e.target.value as typeof queryDateType)
-                  }
-                >
-                  <option value="start_time">Start time</option>
-                  <option value="created_time">Created time</option>
-                </select>
-              </div>
+    <div className="flex flex-col gap-1 w-64">
+      <label className="text-xs text-slate-400">Query date type</label>
+      <select
+        className="block w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
+        value={queryDateType}
+        onChange={(e) =>
+          setQueryDateType(e.target.value as typeof queryDateType)
+        }
+      >
+        <option value="start_time">Start time</option>
+        <option value="created_time">Created time</option>
+      </select>
+    </div>
 
-              <div className="flex flex-col gap-1">
-                <label className="text-xs text-slate-400">Page size</label>
-                <input
-                  type="number"
-                  min={1}
-                  max={300}
-                  className="block w-32 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder:text-slate-400 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
-                  value={pageSize}
-                  onChange={(e) =>
-                    setPageSize(Number(e.target.value) || 30)
-                  }
-                />
-              </div>
-            </div>
+    <div className="flex flex-col gap-1 w-32">
+      <label className="text-xs text-slate-400">Page size</label>
+      <input
+        type="number"
+        min={1}
+        max={300}
+        className="block w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder:text-slate-400 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
+        value={pageSize}
+        onChange={(e) => setPageSize(Number(e.target.value) || 30)}
+      />
+    </div>
+  </div>
 
-            <div className="flex items-center justify-between gap-2">
-              <button
-                onClick={handleSearch}
-                disabled={loading}
-                className="inline-flex items-center gap-2 bg-sky-600 hover:bg-sky-500 disabled:opacity-60 disabled:cursor-not-allowed px-3 py-1.5 rounded-lg text-sm font-medium"
-              >
-                {loading ? "Loading…" : "Search"}
-              </button>
+  {/* Search + stats */}
+  <div className="flex items-center justify-between gap-2">
+    <button
+      onClick={handleSearch}
+      disabled={loading}
+      className="inline-flex items-center gap-2 bg-sky-600 hover:bg-sky-500 disabled:opacity-60 disabled:cursor-not-allowed px-3 py-1.5 rounded-lg text-sm font-medium"
+    >
+      {loading ? "Loading…" : "Search"}
+    </button>
 
-              <div className="text-xs text-slate-400 flex items-center gap-3">
-                <span>
-                  Records:{" "}
-                  {typeof data?.total_records === "number"
-                    ? data.total_records
-                    : recordings.length}
-                </span>
-                {currentToken && <span>Page token: {currentToken}</span>}
-              </div>
-            </div>
+    <div className="text-xs text-slate-400 flex items-center gap-3">
+      <span>
+        Records:{" "}
+        {typeof data?.total_records === "number"
+          ? data.total_records
+          : recordings.length}
+      </span>
+      {currentToken && <span>Page token: {currentToken}</span>}
+    </div>
+  </div>
 
-            {error && (
-              <div className="text-xs text-red-400 bg-red-950/40 border border-red-800 rounded-lg px-3 py-2">
-                Error: {error}
-              </div>
-            )}
-          </section>
+  {error && (
+    <div className="text-xs text-red-400 bg-red-950/40 border border-red-800 rounded-lg px-3 py-2">
+      Error: {error}
+    </div>
+  )}
+</section>
+
 
           {/* Table */}
           <section className="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 shadow-lg shadow-slate-950/40">
