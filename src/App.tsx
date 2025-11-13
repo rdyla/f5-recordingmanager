@@ -66,38 +66,46 @@ const App: React.FC = () => {
   const [prevTokens, setPrevTokens] = useState<string[]>([]);
   const [currentToken, setCurrentToken] = useState<string | null>(null);
 
-  const fetchRecordings = async (tokenOverride?: string | null) => {
-    setLoading(true);
-    setError(null);
+ const fetchRecordings = async (tokenOverride: string | null = null) => {
+  setLoading(true);
+  setError(null);
 
-    try {
-      const params = new URLSearchParams();
-      params.set("from", from);
-      params.set("to", to);
-      params.set("page_size", String(pageSize));
-      if (recordingType !== "All") {
-        params.set("recording_type", recordingType);
-      }
-      params.set("query_date_type", queryDateType);
+  try {
+    const params = new URLSearchParams();
+    params.set("from", from);
+    params.set("to", to);
+    params.set("page_size", String(pageSize));
 
-      const res = await fetch(`/api/phone/recordings?${params.toString()}`);
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(`HTTP ${res.status}: ${text}`);
-      }
-
-      const json: ApiResponse = await res.json();
-      setData(json);
-      setNextToken(json.next_page_token || "");
-
-      console.debug("Recordings payload", json);
-    } catch (e: any) {
-      console.error(e);
-      setError(e?.message || String(e));
-    } finally {
-      setLoading(false);
+    if (recordingType !== "All") {
+      params.set("recording_type", recordingType);
     }
-  };
+
+    params.set("query_date_type", queryDateType);
+
+    // ✅ use tokenOverride for pagination
+    if (tokenOverride && tokenOverride.length > 0) {
+      params.set("next_page_token", tokenOverride);
+    }
+
+    const res = await fetch(`/api/phone/recordings?${params.toString()}`);
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`HTTP ${res.status}: ${text}`);
+    }
+
+    const json: ApiResponse = await res.json();
+    setData(json);
+    setNextToken(json.next_page_token || "");
+
+    console.debug("Recordings payload", json);
+  } catch (e: any) {
+    console.error(e);
+    setError(e?.message || String(e));
+  } finally {
+    setLoading(false);
+  }
+};
+
 
   const handleSearch = () => {
     setPrevTokens([]);
