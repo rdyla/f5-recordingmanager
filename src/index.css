@@ -10,3 +10,36 @@ body {
   background-color: #020617; /* slate-950 */
   color: #e5e7eb;            /* light slate */
 }
+
+/* Fallbacks to ensure key Tailwind-like classes behave as expected */
+
+.bg-slate-900 {
+  background-color: #020617 !important; /* dark slate */
+}
+
+.border-slate-700 {
+  border-color: #374151 !important;
+}
+
+.text-slate-100 {
+  color: #f3f4f6 !important;
+}
+
+.w-32 {
+  width: 8rem !important;  /* 128px */
+}
+
+.w-64 {
+  width: 16rem !important; /* 256px */
+}
+
+.max-w-xs {
+  max-width: 20rem !important;
+}
+
+/* Keep form controls from stretching across the whole card */
+input[type="date"],
+input[type="number"],
+select {
+  box-sizing: border-box;
+}
