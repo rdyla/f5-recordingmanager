@@ -97,9 +97,7 @@ const App: React.FC = () => {
   const [recordingType, setRecordingType] = useState<
     "Automatic" | "OnDemand" | "All"
   >("OnDemand");
-  const [queryDateType, setQueryDateType] = useState<
-    "start_time" | "created_time"
-  >("start_time");
+  const [queryDateType] = useState<"start_time" | "created_time">("start_time");
   const [pageSize, setPageSize] = useState(30);
   const [source, setSource] = useState<SourceFilter>("phone");
 
