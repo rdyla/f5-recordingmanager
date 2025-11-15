@@ -544,22 +544,28 @@ const App: React.FC = () => {
 
   return (
     <div className="app-page">
-      <header className="app-header">
-        <div className="app-header-inner">
-          <h1 className="app-title">Zoom Recording Explorer</h1>
-          <p className="app-subtitle">
-            Source: {source === "phone" ? "Phone" : "Meetings"} · {data?.from} →{" "}
-            {data?.to}
-            {meetingIdentity && source === "meetings" && (
-              <>
-                {" "}
-                · Meetings user: {meetingIdentity.userId}
-                {meetingIdentity.source === "default_me" && " (me)"}
-              </>
-            )}
-          </p>
-        </div>
-      </header>
+<header className="app-header">
+  <div className="app-header-inner">
+    <h1 className="app-title">Zoom Recording Explorer</h1>
+    <p className="app-subtitle">
+      Source: {source === "phone" ? "Phone" : "Meetings"} · {data?.from} →{" "}
+      {data?.to}
+      {meetingIdentity && source === "meetings" && (
+        <>
+          {" "}
+          · Meetings user: {meetingIdentity.userId}
+          {meetingIdentity.source === "default_me" && " (me)"}
+        </>
+      )}
+      {authEmail && (
+        <>
+          {" "}
+          · Signed in as {authEmail}
+        </>
+      )}
+    </p>
+  </div>
+</header>
 
       <main className="app-main">
         <div className="app-main-inner">
