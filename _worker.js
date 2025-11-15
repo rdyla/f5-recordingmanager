@@ -99,45 +99,6 @@ async function handleDeletePhoneRecording(req, env) {
     headers: { Authorization: `Bearer ${token}` },
   });
 
-  if (!zoomRes.ok && zoomRes.status !== 204) {
-    const text = await zoomRes.text();
-    return json(zoomRes.status, {
-      error: true,
-      message: text || `Zoom delete failed with status ${zoomRes.status}`,
-    });
-  }
-
-  return json(200, { ok: true });
-}
-
-async function handleDeletePhoneRecording(req, env) {
-  if (req.method !== "POST") {
-    return json(405, { error: "Method not allowed" });
-  }
-
-  let body;
-  try {
-    body = await req.json();
-  } catch {
-    return json(400, { error: "Invalid JSON body" });
-  }
-
-  const recordingId = body?.recordingId;
-  if (!recordingId) {
-    return json(400, { error: "Missing recordingId" });
-  }
-
-  const token = await getZoomAccessToken(env);
-
-  const zoomUrl = `${ZOOM_API_BASE}/phone/recordings/${encodeURIComponent(
-    recordingId
-  )}`;
-
-  const zoomRes = await fetch(zoomUrl, {
-    method: "DELETE",
-    headers: { Authorization: `Bearer ${token}` },
-  });
-
   const status = zoomRes.status;
   const text = await zoomRes.text();
 
