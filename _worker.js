@@ -110,6 +110,78 @@ async function handleDeletePhoneRecording(req, env) {
   return json(200, { ok: true });
 }
 
+async function handleDeletePhoneRecording(req, env) {
+  if (req.method !== "POST") {
+    return json(405, { error: "Method not allowed" });
+  }
+
+  let body;
+  try {
+    body = await req.json();
+  } catch {
+    return json(400, { error: "Invalid JSON body" });
+  }
+
+  const recordingId = body?.recordingId;
+  if (!recordingId) {
+    return json(400, { error: "Missing recordingId" });
+  }
+
+  const token = await getZoomAccessToken(env);
+
+  const zoomUrl = `${ZOOM_API_BASE}/phone/recordings/${encodeURIComponent(
+    recordingId
+  )}`;
+
+  const zoomRes = await fetch(zoomUrl, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  const status = zoomRes.status;
+  const text = await zoomRes.text();
+
+  // Log to Cloudflare tail
+  console.log("PHONE DELETE", {
+    zoomUrl,
+    status,
+    body: text.slice(0, 500),
+  });
+
+  // If Zoom returns JSON with an error code/message, treat it as failure
+  if (text) {
+    try {
+      const z = JSON.parse(text);
+      if (z.code || z.message) {
+        return json(status === 200 ? 400 : status, {
+          error: true,
+          zoomStatus: status,
+          zoomCode: z.code,
+          zoomMessage: z.message,
+          raw: text,
+        });
+      }
+    } catch {
+      // body wasn't JSON; fall through
+    }
+  }
+
+  if (!zoomRes.ok && status !== 204) {
+    return json(status, {
+      error: true,
+      zoomStatus: status,
+      raw: text,
+    });
+  }
+
+  // Zoom often returns 204 with no body on success
+  return json(200, {
+    ok: true,
+    zoomStatus: status,
+    raw: text || null,
+  });
+}
+
 async function handleDeleteMeetingRecording(req, env) {
   if (req.method !== "POST") {
     return json(405, { error: "Method not allowed" });
@@ -124,7 +196,7 @@ async function handleDeleteMeetingRecording(req, env) {
 
   const meetingId = body?.meetingId;
   const recordingId = body?.recordingId;
-  const action = body?.action || "trash"; // or "delete" to skip trash
+  const action = body?.action || "trash"; // or "delete" to bypass trash
 
   if (!meetingId || !recordingId) {
     return json(400, {
@@ -147,16 +219,49 @@ async function handleDeleteMeetingRecording(req, env) {
     headers: { Authorization: `Bearer ${token}` },
   });
 
-  if (!zoomRes.ok && zoomRes.status !== 204) {
-    const text = await zoomRes.text();
-    return json(zoomRes.status, {
+  const status = zoomRes.status;
+  const text = await zoomRes.text();
+
+  console.log("MEETING DELETE", {
+    zoomUrl,
+    status,
+    body: text.slice(0, 500),
+  });
+
+  // Zoom can return 200 + {"code":200,"message":"No permission."}
+  // Treat that as an error, not success.
+  if (text) {
+    try {
+      const z = JSON.parse(text);
+      if (z.code || z.message) {
+        return json(status === 200 ? 400 : status, {
+          error: true,
+          zoomStatus: status,
+          zoomCode: z.code,
+          zoomMessage: z.message,
+          raw: text,
+        });
+      }
+    } catch {
+      // not JSON, ignore
+    }
+  }
+
+  if (!zoomRes.ok && status !== 204) {
+    return json(status, {
       error: true,
-      message: text || `Zoom meeting delete failed with status ${zoomRes.status}`,
+      zoomStatus: status,
+      raw: text,
     });
   }
 
-  return json(200, { ok: true });
+  return json(200, {
+    ok: true,
+    zoomStatus: status,
+    raw: text || null,
+  });
 }
+
 
 
 /* -------------------- MEETING RECORDINGS (REAL) -------------------- */
