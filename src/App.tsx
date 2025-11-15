@@ -555,10 +555,15 @@ const App: React.FC = () => {
     const confirmed = window.confirm(
       `Delete ${selectedCount} ${
         source === "phone" ? "phone" : "meeting"
-      } recording(s)? This will move them to trash or permanently delete them based on your Zoom settings.`
+      } recording(s)? This will ${
+        demoMode
+          ? "remove them from this demo table."
+          : "move them to trash or permanently delete them based on your Zoom settings."
+      }`
     );
     if (!confirmed) return;
 
+    // Build flat list of selected records (from filtered set, not only current page)
     const toDelete: Recording[] = [];
     filteredRecordings.forEach((rec, idx) => {
       const key = makeRecordKey(rec, idx);
@@ -569,25 +574,7 @@ const App: React.FC = () => {
 
     if (!toDelete.length) return;
 
-    // DEMO MODE: in-memory delete only
-    if (demoMode) {
-      setData((prev) => {
-        if (!prev || !prev.recordings) return prev;
-        const remaining = prev.recordings.filter((r) => !toDelete.includes(r));
-        return {
-          ...prev,
-          recordings: remaining,
-          total_records: remaining.length,
-        };
-      });
-      setSelectedKeys(new Set());
-      setDeleteMessage(
-        `Demo delete: removed ${toDelete.length} record(s) from the table.`
-      );
-      return;
-    }
-
-    // REAL MODE
+    // In BOTH real + demo mode, show progress bar
     setDeleting(true);
     setDeleteProgress({ total: toDelete.length, done: 0 });
     setDeleteMessage(null);
@@ -600,47 +587,54 @@ const App: React.FC = () => {
         const rec = toDelete[i];
 
         try {
-          if (source === "phone") {
-            if (!rec.id) {
-              throw new Error("Missing recording id for phone recording");
-            }
-            const res = await fetch("/api/phone/recordings/delete", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ recordingId: rec.id }),
-            });
-            if (!res.ok) {
-              const txt = await res.text();
-              console.error("Phone delete failed", res.status, txt);
-              throw new Error(
-                `Phone delete failed: ${res.status} ${txt || ""}`.trim()
-              );
-            }
+          if (demoMode) {
+            // DEMO MODE: simulate work with a tiny delay
+            await new Promise((resolve) => setTimeout(resolve, 40));
+            success += 1;
           } else {
-            if (!rec.id || !rec.meetingId) {
-              throw new Error(
-                "Missing meetingId or recordingId for meeting recording"
-              );
+            // REAL MODE: call backend delete APIs
+            if (source === "phone") {
+              if (!rec.id) {
+                throw new Error("Missing recording id for phone recording");
+              }
+              const res = await fetch("/api/phone/recordings/delete", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ recordingId: rec.id }),
+              });
+              if (!res.ok) {
+                const txt = await res.text();
+                console.error("Phone delete failed", res.status, txt);
+                throw new Error(
+                  `Phone delete failed: ${res.status} ${txt || ""}`.trim()
+                );
+              }
+            } else {
+              if (!rec.id || !rec.meetingId) {
+                throw new Error(
+                  "Missing meetingId or recordingId for meeting recording"
+                );
+              }
+              const res = await fetch("/api/meeting/recordings/delete", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  meetingId: rec.meetingId,
+                  recordingId: rec.id,
+                  action: "trash",
+                }),
+              });
+              if (!res.ok) {
+                const txt = await res.text();
+                console.error("Meeting delete failed", res.status, txt);
+                throw new Error(
+                  `Meeting delete failed: ${res.status} ${txt || ""}`.trim()
+                );
+              }
             }
-            const res = await fetch("/api/meeting/recordings/delete", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                meetingId: rec.meetingId,
-                recordingId: rec.id,
-                action: "trash",
-              }),
-            });
-            if (!res.ok) {
-              const txt = await res.text();
-              console.error("Meeting delete failed", res.status, txt);
-              throw new Error(
-                `Meeting delete failed: ${res.status} ${txt || ""}`.trim()
-              );
-            }
-          }
 
-          success += 1;
+            success += 1;
+          }
         } catch (err) {
           console.error("Delete error", err);
           failed += 1;
@@ -649,12 +643,31 @@ const App: React.FC = () => {
         }
       }
 
-      setDeleteMessage(
-        `Delete complete: ${success} succeeded, ${failed} failed.`
-      );
-
-      await fetchRecordings(currentToken);
-      setSelectedKeys(new Set());
+      if (demoMode) {
+        // Actually remove them from the in-memory dataset
+        setData((prev) => {
+          if (!prev || !prev.recordings) return prev;
+          const remaining = prev.recordings.filter(
+            (r) => !toDelete.includes(r)
+          );
+          return {
+            ...prev,
+            recordings: remaining,
+            total_records: remaining.length,
+          };
+        });
+        setDeleteMessage(
+          `Demo delete: removed ${success} record(s) from the table.`
+        );
+        setSelectedKeys(new Set());
+      } else {
+        setDeleteMessage(
+          `Delete complete: ${success} succeeded, ${failed} failed.`
+        );
+        // After real delete, refresh data from server
+        await fetchRecordings(currentToken);
+        setSelectedKeys(new Set());
+      }
     } finally {
       setDeleting(false);
       setTimeout(() => setDeleteProgress(null), 2000);
