@@ -79,12 +79,14 @@ async function handleGetRecordings(req, env) {
 
 /* -------------------- MEETING RECORDINGS (USER-AGGREGATED + DEBUG) -------------------- */
 
+/* -------------------- MEETING RECORDINGS (USER-AGGREGATED, TABLE-FRIENDLY) -------------------- */
+
 async function handleGetMeetingRecordings(req, env) {
   try {
-    const url = new URL(req.url);
+    const url   = new URL(req.url);
     const from  = url.searchParams.get("from")  || "";
     const to    = url.searchParams.get("to")    || "";
-    const debug = url.searchParams.get("debug") || ""; // "users" or "user-recordings"
+    const debug = url.searchParams.get("debug") || ""; // "users" | "user-recordings" | ""
 
     const token = await getZoomAccessToken(env);
 
@@ -101,9 +103,7 @@ async function handleGetMeetingRecordings(req, env) {
       }
 
       const usersRes = await fetch(usersUrl.toString(), {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+        headers: { Authorization: `Bearer ${token}` },
       });
 
       if (!usersRes.ok) {
@@ -126,7 +126,7 @@ async function handleGetMeetingRecordings(req, env) {
       nextPageToken = usersData.next_page_token || "";
     } while (nextPageToken);
 
-    // 🔍 DEBUG MODE: just show the users we got from Zoom
+    // DEBUG: show just user list
     if (debug === "users") {
       return new Response(
         JSON.stringify(
@@ -161,10 +161,11 @@ async function handleGetMeetingRecordings(req, env) {
         JSON.stringify({
           from,
           to,
-          page_size: 0,
           next_page_token: "",
+          page_count: 0,
+          page_size: 0,
+          total_records: 0,
           meetings: [],
-          total_users: 0,
         }),
         { status: 200, headers: { "Content-Type": "application/json" } }
       );
@@ -181,7 +182,7 @@ async function handleGetMeetingRecordings(req, env) {
 
     const meetings = [];
     const errors = [];
-    const perUserSummary = []; // only used in debug=user-recordings
+    const perUserSummary = [];
 
     // 3) Throttled concurrency
     const concurrency = 5;
@@ -194,14 +195,11 @@ async function handleGetMeetingRecordings(req, env) {
 
         try {
           const res = await fetch(buildRecordingsUrl(user.id), {
-            headers: {
-              Authorization: `Bearer ${token}`,
-            },
+            headers: { Authorization: `Bearer ${token}` },
           });
 
           const text = await res.text();
 
-          let data;
           if (!res.ok) {
             errors.push({
               userId: user.id,
@@ -212,6 +210,7 @@ async function handleGetMeetingRecordings(req, env) {
             continue;
           }
 
+          let data;
           try {
             data = JSON.parse(text);
           } catch {
@@ -227,19 +226,53 @@ async function handleGetMeetingRecordings(req, env) {
 
           const userMeetings = Array.isArray(data.meetings) ? data.meetings : [];
 
-          // summary for debug mode
           perUserSummary.push({
             userId: user.id,
             userEmail: user.email,
             meetingCount: userMeetings.length,
           });
 
-          // normal aggregated list
           for (const m of userMeetings) {
+            const files = Array.isArray(m.recording_files) ? m.recording_files : [];
+            const primary = files[0] || null;
+
+            // Keep the important stuff + a trimmed recording_files
             meetings.push({
-              ...m,
-              owner_id: user.id,
+              // Core meeting fields from zoom schema
+              account_id: m.account_id,
+              duration: m.duration,
+              host_id: m.host_id,
+              id: m.id,
+              uuid: m.uuid,
+              topic: m.topic,
+              start_time: m.start_time,
+              recording_count: m.recording_count,
+              total_size: m.total_size,
+              type: m.type,
+              auto_delete: m.auto_delete,
+              auto_delete_date: m.auto_delete_date,
+              recording_play_passcode: m.recording_play_passcode,
+
+              // Owner context (makes filtering easy)
               owner_email: user.email,
+
+              // “Table friendly” derived fields
+              primary_file_type: primary?.file_type || null,
+              primary_file_extension: primary?.file_extension || null,
+
+              // Trimmed recording_files: keep what’s interesting for UI
+              recording_files: files.map(f => ({
+                id: f.id,
+                file_type: f.file_type,
+                file_extension: f.file_extension,
+                file_size: f.file_size,
+                recording_type: f.recording_type,
+                recording_start: f.recording_start,
+                recording_end: f.recording_end,
+                play_url: f.play_url,
+                download_url: f.download_url,
+                status: f.status,
+              })),
             });
           }
         } catch (e) {
@@ -256,7 +289,7 @@ async function handleGetMeetingRecordings(req, env) {
       Array.from({ length: Math.min(concurrency, users.length) }, () => worker())
     );
 
-    // 🔍 DEBUG MODE: return per-user meeting counts instead of full meeting list
+    // DEBUG: per-user counts only
     if (debug === "user-recordings") {
       return new Response(
         JSON.stringify(
@@ -279,6 +312,43 @@ async function handleGetMeetingRecordings(req, env) {
         }
       );
     }
+
+    // 4) Pagination-ish envelope shaped like Zoom’s schema
+    const totalRecords = meetings.length;
+
+    const respBody = {
+      from,
+      to,
+      next_page_token: "",       // we return everything in one shot for now
+      page_count: totalRecords ? 1 : 0,
+      page_size: totalRecords,
+      total_records: totalRecords,
+      meetings,
+    };
+
+    if (errors.length) {
+      // not part of Zoom schema, but handy for debug / you can ignore in UI
+      respBody._errors = errors;
+    }
+
+    return new Response(JSON.stringify(respBody), {
+      status: 200,
+      headers: {
+        "Content-Type": "application/json",
+        "Access-Control-Allow-Origin": "*",
+      },
+    });
+  } catch (err) {
+    return new Response(
+      JSON.stringify({
+        error: true,
+        status: 500,
+        message: err?.message || String(err),
+      }),
+      { status: 500, headers: { "Content-Type": "application/json" } }
+    );
+  }
+}
 
     // 4) Normal aggregated response
     const respBody = {
