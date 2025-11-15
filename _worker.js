@@ -69,7 +69,95 @@ async function handleGetRecordings(req, env) {
   });
 }
 
-/* -------------------- MEETING RECORDINGS (STUB FOR NOW) -------------------- */
+/* -------------------- DELETE MEETING RECORDINGS -------------------- */
+
+async function handleDeletePhoneRecording(req, env) {
+  if (req.method !== "POST") {
+    return json(405, { error: "Method not allowed" });
+  }
+
+  let body;
+  try {
+    body = await req.json();
+  } catch {
+    return json(400, { error: "Invalid JSON body" });
+  }
+
+  const recordingId = body?.recordingId;
+  if (!recordingId) {
+    return json(400, { error: "Missing recordingId" });
+  }
+
+  const token = await getZoomAccessToken(env);
+
+  const zoomUrl = `${ZOOM_API_BASE}/phone/recordings/${encodeURIComponent(
+    recordingId
+  )}`;
+
+  const zoomRes = await fetch(zoomUrl, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  if (!zoomRes.ok && zoomRes.status !== 204) {
+    const text = await zoomRes.text();
+    return json(zoomRes.status, {
+      error: true,
+      message: text || `Zoom delete failed with status ${zoomRes.status}`,
+    });
+  }
+
+  return json(200, { ok: true });
+}
+
+async function handleDeleteMeetingRecording(req, env) {
+  if (req.method !== "POST") {
+    return json(405, { error: "Method not allowed" });
+  }
+
+  let body;
+  try {
+    body = await req.json();
+  } catch {
+    return json(400, { error: "Invalid JSON body" });
+  }
+
+  const meetingId = body?.meetingId;
+  const recordingId = body?.recordingId;
+  const action = body?.action || "trash"; // or "delete" to skip trash
+
+  if (!meetingId || !recordingId) {
+    return json(400, {
+      error: "Missing meetingId or recordingId",
+    });
+  }
+
+  const token = await getZoomAccessToken(env);
+
+  let zoomUrl = `${ZOOM_API_BASE}/meetings/${encodeURIComponent(
+    String(meetingId)
+  )}/recordings/${encodeURIComponent(String(recordingId))}`;
+
+  const params = new URLSearchParams();
+  params.set("action", action);
+  zoomUrl += `?${params.toString()}`;
+
+  const zoomRes = await fetch(zoomUrl, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  if (!zoomRes.ok && zoomRes.status !== 204) {
+    const text = await zoomRes.text();
+    return json(zoomRes.status, {
+      error: true,
+      message: text || `Zoom meeting delete failed with status ${zoomRes.status}`,
+    });
+  }
+
+  return json(200, { ok: true });
+}
+
 
 /* -------------------- MEETING RECORDINGS (REAL) -------------------- */
 
@@ -458,9 +546,19 @@ export default {
       return handleDownloadRecording(req, env);
     }
 
+     // NEW: delete a single phone recording
+    if (url.pathname === "/api/phone/recordings/delete" && req.method === "POST") {
+      return handleDeletePhoneRecording(req, env);
+    }
+
     // Meeting recordings (stub)
     if (url.pathname === "/api/meeting/recordings" && req.method === "GET") {
       return handleGetMeetingRecordings(req, env);
+    }
+
+        // NEW: delete a single meeting recording file
+    if (url.pathname === "/api/meeting/recordings/delete" && req.method === "POST") {
+      return handleDeleteMeetingRecording(req, env);
     }
 
     // Meeting identity

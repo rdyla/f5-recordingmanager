@@ -41,11 +41,12 @@ type Recording = {
   end_time?: string;
   disclaimer_status?: number;
 
-  // extra for meetings
+  // extras
   source?: RecordingSource;
   topic?: string;
   host_name?: string;
   host_email?: string;
+  meetingId?: number; // numeric meeting id for delete API
 };
 
 type ApiResponse = {
@@ -57,7 +58,7 @@ type ApiResponse = {
   recordings?: Recording[];
 };
 
-type SourceFilter = "phone" | "meetings" | "both";
+type SourceFilter = "phone" | "meetings";
 
 type MeetingRecordingFile = {
   id?: string;
@@ -74,8 +75,7 @@ type MeetingItem = {
   start_time: string;
   duration?: number;
   host_id: string;
-  host_email?: string;      // may come from owner_email on backend
-  owner_email?: string;
+  host_email: string;
   recording_files?: MeetingRecordingFile[];
 };
 
@@ -84,27 +84,25 @@ type MeetingApiResponse = {
   to?: string;
   page_size?: number;
   next_page_token?: string;
-  total_records?: number;
   meetings?: MeetingItem[];
-  _errors?: any;
+};
+
+type DeleteProgress = {
+  total: number;
+  done: number;
 };
 
 const todayStr = new Date().toISOString().slice(0, 10);
 
+// small helper to safely string-ify values
+const S = (v: unknown) => (v == null ? "" : String(v));
+
 const App: React.FC = () => {
   const [from, setFrom] = useState(todayStr);
   const [to, setTo] = useState(todayStr);
-  const [recordingType, setRecordingType] = useState<
-    "Automatic" | "OnDemand" | "All"
-  >("OnDemand");
-  const [queryDateType] = useState<"start_time" | "created_time">("start_time");
-  const [pageSize, setPageSize] = useState(30);
-  const [source, setSource] = useState<SourceFilter>("phone");
 
-  // NEW: meeting search filters
-  const [meetingOwnerEmail, setMeetingOwnerEmail] = useState("");
-  const [meetingTopic, setMeetingTopic] = useState("");
-  const [meetingQuery, setMeetingQuery] = useState("");
+  const [pageSize, setPageSize] = useState<number>(100);
+  const [source, setSource] = useState<SourceFilter>("phone");
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -116,19 +114,37 @@ const App: React.FC = () => {
   const [meetingIdentity, setMeetingIdentity] =
     useState<MeetingIdentity | null>(null);
 
-  // ---- helpers to call backend ----
+  const [query, setQuery] = useState<string>("");
+  const [pageIndex, setPageIndex] = useState<number>(0);
+
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(
+    () => new Set()
+  );
+  const [deleting, setDeleting] = useState(false);
+  const [deleteProgress, setDeleteProgress] =
+    useState<DeleteProgress | null>(null);
+  const [deleteMessage, setDeleteMessage] = useState<string | null>(null);
+
+  // ---- helpers ----
+
+  const makeRecordKey = (rec: Recording, idx: number): string => {
+    if (rec.source === "meetings") {
+      return `m|${rec.meetingId ?? ""}|${rec.id ?? idx}`;
+    }
+    return `p|${rec.id ?? idx}`;
+  };
 
   const fetchPhonePage = async (tokenOverride: string | null) => {
     const params = new URLSearchParams();
     params.set("from", from);
     params.set("to", to);
-    params.set("page_size", String(pageSize));
 
-    if (recordingType !== "All") {
-      params.set("recording_type", recordingType);
-    }
+    // Zoom max is 300; clamp to avoid 4xx
+    const zoomPageSize = Math.min(pageSize || 100, 300);
+    params.set("page_size", String(zoomPageSize));
 
-    params.set("query_date_type", queryDateType);
+    // phone-only endpoint supports query_date_type; keep simple: start_time
+    params.set("query_date_type", "start_time");
 
     if (tokenOverride && tokenOverride.length > 0) {
       params.set("next_page_token", tokenOverride);
@@ -153,17 +169,15 @@ const App: React.FC = () => {
     const params = new URLSearchParams();
     params.set("from", from);
     params.set("to", to);
-    params.set("page_size", String(pageSize));
 
-    // NEW: pass search filters to backend
-    if (meetingOwnerEmail) params.set("owner_email", meetingOwnerEmail);
-    if (meetingTopic) params.set("topic", meetingTopic);
-    if (meetingQuery) params.set("q", meetingQuery);
+    const zoomPageSize = Math.min(pageSize || 100, 300);
+    params.set("page_size", String(zoomPageSize));
 
     if (tokenOverride && tokenOverride.length > 0) {
       params.set("next_page_token", tokenOverride);
     }
 
+    // backend already supports aggregated per-user call
     const res = await fetch(`/api/meeting/recordings?${params.toString()}`);
     if (!res.ok) {
       const text = await res.text();
@@ -174,10 +188,6 @@ const App: React.FC = () => {
 
     const recs: Recording[] = [];
     for (const m of api.meetings ?? []) {
-      // newer backend may only provide owner_email; fall back accordingly
-      const hostEmail =
-        (m.host_email as string) || (m.owner_email as string) || "";
-
       for (const f of m.recording_files ?? []) {
         recs.push({
           id:
@@ -193,19 +203,20 @@ const App: React.FC = () => {
           recording_type: f.file_type || "Recording",
           download_url: f.download_url,
           caller_name: m.topic,
-          callee_name: hostEmail,
+          callee_name: m.host_email,
           owner: {
             type: "user",
             id: m.host_id,
-            name: hostEmail,
+            name: m.host_email,
           },
           site: { id: "", name: "Meeting" },
           direction: "meeting",
           disclaimer_status: undefined,
           source: "meetings",
           topic: m.topic,
-          host_name: hostEmail,
-          host_email: hostEmail,
+          host_name: m.host_email,
+          host_email: m.host_email,
+          meetingId: m.id,
         });
       }
     }
@@ -216,6 +227,7 @@ const App: React.FC = () => {
   const fetchRecordings = async (tokenOverride: string | null = null) => {
     setLoading(true);
     setError(null);
+    setDeleteMessage(null);
 
     try {
       if (source === "phone") {
@@ -230,45 +242,23 @@ const App: React.FC = () => {
         });
 
         setNextToken(api.next_page_token ?? null);
-      } else if (source === "meetings") {
+      } else {
         const { api, recs } = await fetchMeetingPage(tokenOverride);
 
         setData({
           from: api.from ?? from,
           to: api.to ?? to,
-          total_records: api.total_records ?? recs.length,
+          total_records: recs.length,
           next_page_token: api.next_page_token ?? null,
           recordings: recs,
         });
 
         setNextToken(api.next_page_token ?? null);
-      } else {
-        // BOTH: first page of each, combined, sorted by time desc
-        const [phone, meetings] = await Promise.all([
-          fetchPhonePage(null),
-          fetchMeetingPage(null),
-        ]);
-
-        const combined = [...phone.recs, ...meetings.recs].sort((a, b) => {
-          const ta = a.date_time ? new Date(a.date_time).getTime() : 0;
-          const tb = b.date_time ? new Date(b.date_time).getTime() : 0;
-          return tb - ta;
-        });
-
-        setData({
-          from,
-          to,
-          total_records: combined.length,
-          next_page_token: null,
-          recordings: combined,
-        });
-
-        // disable pagination in combined mode
-        setNextToken(null);
-        setPrevTokens([]);
-        setCurrentToken(null);
       }
 
+      // reset paging + selection when we load a new server page
+      setPageIndex(0);
+      setSelectedKeys(new Set());
       console.debug("fetchRecordings done");
     } catch (e: any) {
       console.error(e);
@@ -281,6 +271,8 @@ const App: React.FC = () => {
   const handleSearch = () => {
     setPrevTokens([]);
     setCurrentToken(null);
+    setPageIndex(0);
+    setSelectedKeys(new Set());
     fetchRecordings(null);
   };
 
@@ -301,6 +293,7 @@ const App: React.FC = () => {
   };
 
   useEffect(() => {
+    // initial load
     fetchRecordings(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -322,7 +315,193 @@ const App: React.FC = () => {
   }, []);
 
   const recordings: Recording[] = data?.recordings ?? [];
-  const paginationDisabled = source === "both";
+
+  // ------ free text filtering & client-side paging ------
+
+  const normalizedQuery = query.trim().toLowerCase();
+
+  const matchesQuery = (rec: Recording): boolean => {
+    if (!normalizedQuery) return true;
+
+    const haystack =
+      [
+        rec.caller_name,
+        rec.caller_number,
+        rec.callee_name,
+        rec.callee_number,
+        rec.owner?.name,
+        rec.topic,
+        rec.host_email,
+        rec.host_name,
+      ]
+        .map(S)
+        .join(" ")
+        .toLowerCase() || "";
+
+    return haystack.includes(normalizedQuery);
+  };
+
+  const filteredRecordings = recordings.filter(matchesQuery);
+
+  const effectivePageSize = pageSize || 100;
+  const totalFiltered = filteredRecordings.length;
+  const totalPages = totalFiltered
+    ? Math.ceil(totalFiltered / effectivePageSize)
+    : 1;
+  const safePageIndex =
+    pageIndex >= totalPages ? Math.max(0, totalPages - 1) : pageIndex;
+
+  const pageStart = safePageIndex * effectivePageSize;
+  const pageEnd = pageStart + effectivePageSize;
+  const pageRecords = filteredRecordings.slice(pageStart, pageEnd);
+
+  const selectedCount = filteredRecordings.reduce((acc, rec, idx) => {
+    const key = makeRecordKey(rec, idx);
+    return acc + (selectedKeys.has(key) ? 1 : 0);
+  }, 0);
+
+  const allOnPageSelected =
+    pageRecords.length > 0 &&
+    pageRecords.every((rec, idx) =>
+      selectedKeys.has(makeRecordKey(rec, pageStart + idx))
+    );
+
+  const toggleRowSelection = (rec: Recording, globalIndex: number) => {
+    const key = makeRecordKey(rec, globalIndex);
+    setSelectedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  };
+
+  const selectAllOnPage = (checked: boolean) => {
+    setSelectedKeys((prev) => {
+      const next = new Set(prev);
+      pageRecords.forEach((rec, idx) => {
+        const key = makeRecordKey(rec, pageStart + idx);
+        if (checked) {
+          next.add(key);
+        } else {
+          next.delete(key);
+        }
+      });
+      return next;
+    });
+  };
+
+  const selectAllFiltered = () => {
+    const next = new Set<string>();
+    filteredRecordings.forEach((rec, idx) => {
+      next.add(makeRecordKey(rec, idx));
+    });
+    setSelectedKeys(next);
+  };
+
+  const clearSelection = () => {
+    setSelectedKeys(new Set());
+  };
+
+  const handleBulkDelete = async () => {
+    if (!filteredRecordings.length || !selectedCount) return;
+
+    const confirmed = window.confirm(
+      `Delete ${selectedCount} ${source === "phone" ? "phone" : "meeting"
+      } recording(s)? This will move them to trash or permanently delete them based on your Zoom settings.`
+    );
+    if (!confirmed) return;
+
+    // Build flat list of selected records (from filtered set, not only current page)
+    const toDelete: Recording[] = [];
+    filteredRecordings.forEach((rec, idx) => {
+      const key = makeRecordKey(rec, idx);
+      if (selectedKeys.has(key)) {
+        toDelete.push(rec);
+      }
+    });
+
+    if (!toDelete.length) return;
+
+    setDeleting(true);
+    setDeleteProgress({ total: toDelete.length, done: 0 });
+    setDeleteMessage(null);
+
+    let success = 0;
+    let failed = 0;
+
+    try {
+      for (let i = 0; i < toDelete.length; i++) {
+        const rec = toDelete[i];
+
+        try {
+          if (source === "phone") {
+            if (!rec.id) {
+              throw new Error("Missing recording id for phone recording");
+            }
+            const res = await fetch("/api/phone/recordings/delete", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ recordingId: rec.id }),
+            });
+            if (!res.ok) {
+              const txt = await res.text();
+              console.error("Phone delete failed", res.status, txt);
+              throw new Error(
+                `Phone delete failed: ${res.status} ${txt || ""}`.trim()
+              );
+            }
+          } else {
+            // meetings
+            if (!rec.id || !rec.meetingId) {
+              throw new Error(
+                "Missing meetingId or recordingId for meeting recording"
+              );
+            }
+            const res = await fetch("/api/meeting/recordings/delete", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                meetingId: rec.meetingId,
+                recordingId: rec.id,
+                action: "trash", // or "delete" to permanently delete
+              }),
+            });
+            if (!res.ok) {
+              const txt = await res.text();
+              console.error("Meeting delete failed", res.status, txt);
+              throw new Error(
+                `Meeting delete failed: ${res.status} ${txt || ""}`.trim()
+              );
+            }
+          }
+
+          success += 1;
+        } catch (err) {
+          console.error("Delete error", err);
+          failed += 1;
+        } finally {
+          setDeleteProgress({ total: toDelete.length, done: i + 1 });
+        }
+      }
+
+      setDeleteMessage(
+        `Delete complete: ${success} succeeded, ${failed} failed.`
+      );
+
+      // After delete, refresh data from server
+      await fetchRecordings(currentToken);
+      setSelectedKeys(new Set());
+    } finally {
+      setDeleting(false);
+      setTimeout(() => setDeleteProgress(null), 2000);
+    }
+  };
+
+  const paginationDisabled = false; // server-side pagination still available
 
   return (
     <div className="app-page">
@@ -330,14 +509,9 @@ const App: React.FC = () => {
         <div className="app-header-inner">
           <h1 className="app-title">Zoom Recording Explorer</h1>
           <p className="app-subtitle">
-            Source:{" "}
-            {source === "phone"
-              ? "Phone"
-              : source === "meetings"
-              ? "Meetings"
-              : "Phone + Meetings"}{" "}
-            · {data?.from} → {data?.to}
-            {meetingIdentity && (source === "meetings" || source === "both") && (
+            Source: {source === "phone" ? "Phone" : "Meetings"} · {data?.from} →{" "}
+            {data?.to}
+            {meetingIdentity && source === "meetings" && (
               <>
                 {" "}
                 · Meetings user: {meetingIdentity.userId}
@@ -375,102 +549,77 @@ const App: React.FC = () => {
 
               <div className="filter-group">
                 <label className="filter-label">Source</label>
-                <select
-                  className="form-control"
-                  value={source}
-                  onChange={(e) => {
-                    const val = e.target.value as SourceFilter;
-                    setSource(val);
-                    setPrevTokens([]);
-                    setCurrentToken(null);
-                    setNextToken(null);
-                  }}
-                >
-                  <option value="phone">Phone only</option>
-                  <option value="meetings">Meetings only</option>
-                  <option value="both">Phone + Meetings</option>
-                </select>
+                <div className="toggle-group">
+                  <button
+                    type="button"
+                    className={
+                      source === "phone"
+                        ? "btn-toggle active"
+                        : "btn-toggle"
+                    }
+                    onClick={() => {
+                      setSource("phone");
+                      setPrevTokens([]);
+                      setCurrentToken(null);
+                      setSelectedKeys(new Set());
+                    }}
+                  >
+                    Phone
+                  </button>
+                  <button
+                    type="button"
+                    className={
+                      source === "meetings"
+                        ? "btn-toggle active"
+                        : "btn-toggle"
+                    }
+                    onClick={() => {
+                      setSource("meetings");
+                      setPrevTokens([]);
+                      setCurrentToken(null);
+                      setSelectedKeys(new Set());
+                    }}
+                  >
+                    Meetings
+                  </button>
+                </div>
               </div>
 
-              <div className="filter-group">
-                <label className="filter-label">Recording type</label>
-                <select
+              <div className="filter-group wide">
+                <label className="filter-label">Search</label>
+                <input
+                  type="text"
                   className="form-control"
-                  value={recordingType}
-                  onChange={(e) =>
-                    setRecordingType(e.target.value as typeof recordingType)
+                  placeholder={
+                    source === "phone"
+                      ? "Search name, number, owner…"
+                      : "Search topic, host, email…"
                   }
-                  disabled={source === "meetings" || source === "both"}
-                  title={
-                    source === "meetings" || source === "both"
-                      ? "Recording type filter applies to phone recordings only"
-                      : undefined
-                  }
-                >
-                  <option value="All">All</option>
-                  <option value="Automatic">Automatic</option>
-                  <option value="OnDemand">OnDemand</option>
-                </select>
+                  value={query}
+                  onChange={(e) => {
+                    setQuery(e.target.value);
+                    setPageIndex(0);
+                  }}
+                />
               </div>
 
               <div className="filter-group small">
                 <label className="filter-label">Page size</label>
-                <input
-                  type="number"
-                  min={1}
-                  max={300}
+                <select
                   className="form-control"
                   value={pageSize}
-                  onChange={(e) =>
-                    setPageSize(Number(e.target.value) || 30)
-                  }
-                />
+                  onChange={(e) => {
+                    const val = Number(e.target.value) || 100;
+                    setPageSize(val);
+                    setPageIndex(0);
+                  }}
+                >
+                  <option value={100}>100</option>
+                  <option value={500}>500</option>
+                  <option value={1000}>1000</option>
+                </select>
               </div>
             </div>
-
-            {/* NEW: Meeting search row */}
-            {source === "meetings" && (
-              <div className="filters-row" style={{ marginTop: "0.75rem" }}>
-                <div className="filter-group">
-                  <label className="filter-label">
-                    Owner email (contains)
-                  </label>
-                  <input
-                    type="text"
-                    className="form-control"
-                    placeholder="e.g. ryan@"
-                    value={meetingOwnerEmail}
-                    onChange={(e) => setMeetingOwnerEmail(e.target.value)}
-                  />
-                </div>
-
-                <div className="filter-group">
-                  <label className="filter-label">
-                    Topic (contains)
-                  </label>
-                  <input
-                    type="text"
-                    className="form-control"
-                    placeholder="e.g. onboarding"
-                    value={meetingTopic}
-                    onChange={(e) => setMeetingTopic(e.target.value)}
-                  />
-                </div>
-
-                <div className="filter-group">
-                  <label className="filter-label">
-                    Search (topic / owner / host)
-                  </label>
-                  <input
-                    type="text"
-                    className="form-control"
-                    placeholder="free text search"
-                    value={meetingQuery}
-                    onChange={(e) => setMeetingQuery(e.target.value)}
-                  />
-                </div>
-              </div>
-            )}
 
             <div className="filter-actions">
               <button
@@ -483,36 +632,87 @@ const App: React.FC = () => {
 
               <div className="stats">
                 <span>
-                  Records:{" "}
-                  {typeof data?.total_records === "number"
-                    ? data.total_records
-                    : recordings.length}
+                  Filtered records: {totalFiltered} (showing{" "}
+                  {pageRecords.length} on page {safePageIndex + 1} of{" "}
+                  {totalPages})
                 </span>
                 {currentToken && !paginationDisabled && (
-                  <span>Page token: {currentToken}</span>
-                )}
-                {paginationDisabled && (
-                  <span>(Pagination disabled in combined view)</span>
+                  <span style={{ marginLeft: 12 }}>
+                    API page token: {currentToken}
+                  </span>
                 )}
               </div>
             </div>
 
             {error && <div className="error-banner">Error: {error}</div>}
+            {deleteMessage && (
+              <div className="info-banner">{deleteMessage}</div>
+            )}
           </section>
 
           {/* Table card */}
           <section className="app-card">
+            <div className="bulk-toolbar">
+              <span>
+                Selected {selectedCount} of {totalFiltered} filtered
+              </span>
+              <div className="bulk-actions">
+                {filteredRecordings.length > 0 &&
+                  selectedCount < filteredRecordings.length && (
+                    <button
+                      className="pager-btn"
+                      onClick={selectAllFiltered}
+                      disabled={deleting}
+                    >
+                      Select all filtered
+                    </button>
+                  )}
+                {selectedCount > 0 && (
+                  <>
+                    <button
+                      className="pager-btn"
+                      onClick={clearSelection}
+                      disabled={deleting}
+                    >
+                      Clear selection
+                    </button>
+                    <button
+                      className="btn-danger"
+                      onClick={handleBulkDelete}
+                      disabled={deleting}
+                    >
+                      {deleting ? "Deleting…" : "Delete selected"}
+                    </button>
+                  </>
+                )}
+                {deleting && deleteProgress && (
+                  <span className="delete-progress">
+                    Deleting {deleteProgress.done}/{deleteProgress.total}…
+                  </span>
+                )}
+              </div>
+            </div>
+
             {loading && !recordings.length ? (
               <div className="rec-table-empty">Loading recordings…</div>
-            ) : !recordings.length ? (
+            ) : !filteredRecordings.length ? (
               <div className="rec-table-empty">
-                No recordings found for this range.
+                No recordings match this range/search.
               </div>
             ) : (
               <div className="table-wrapper">
                 <table className="rec-table">
                   <thead>
                     <tr>
+                      <th>
+                        <input
+                          type="checkbox"
+                          checked={allOnPageSelected}
+                          onChange={(e) =>
+                            selectAllOnPage(e.target.checked)
+                          }
+                        />
+                      </th>
                       <th>Date / Time</th>
                       <th>Source</th>
                       <th>Primary</th>
@@ -525,7 +725,9 @@ const App: React.FC = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {recordings.map((rec, idx) => {
+                    {pageRecords.map((rec, idxOnPage) => {
+                      const globalIdx = pageStart + idxOnPage;
+                      const key = makeRecordKey(rec, globalIdx);
                       const isMeeting = rec.source === "meetings";
 
                       const dt = rec.date_time
@@ -569,10 +771,16 @@ const App: React.FC = () => {
                       const sourceLabel = isMeeting ? "Meeting" : "Phone";
 
                       return (
-                        <tr
-                          key={rec.id || rec.call_id || idx}
-                          className="rec-row"
-                        >
+                        <tr key={key} className="rec-row">
+                          <td>
+                            <input
+                              type="checkbox"
+                              checked={selectedKeys.has(key)}
+                              onChange={() =>
+                                toggleRowSelection(rec, globalIdx)
+                              }
+                            />
+                          </td>
                           <td>{dateDisplay}</td>
                           <td>{sourceLabel}</td>
                           <td>{primary}</td>
@@ -617,34 +825,44 @@ const App: React.FC = () => {
             <div className="pager">
               <div className="pager-buttons">
                 <button
-                  onClick={handlePrev}
-                  disabled={
-                    paginationDisabled || !prevTokens.length || loading
+                  onClick={() =>
+                    setPageIndex((idx) => Math.max(0, idx - 1))
                   }
+                  disabled={safePageIndex <= 0 || deleting}
                   className="pager-btn"
                 >
-                  Previous
+                  Prev page
+                </button>
+                <button
+                  onClick={() =>
+                    setPageIndex((idx) =>
+                      idx + 1 < totalPages ? idx + 1 : idx
+                    )
+                  }
+                  disabled={safePageIndex + 1 >= totalPages || deleting}
+                  className="pager-btn"
+                >
+                  Next page
+                </button>
+
+                <button
+                  onClick={handlePrev}
+                  disabled={!prevTokens.length || loading}
+                  className="pager-btn"
+                >
+                  « API prev
                 </button>
                 <button
                   onClick={handleNext}
-                  disabled={
-                    paginationDisabled ||
-                    !nextToken ||
-                    !nextToken.length ||
-                    loading
-                  }
+                  disabled={!nextToken || !nextToken.length || loading}
                   className="pager-btn"
                 >
-                  Next
+                  API next »
                 </button>
               </div>
               <div>
-                Next token:{" "}
-                {paginationDisabled
-                  ? "— (combined view)"
-                  : nextToken && nextToken.length
-                  ? nextToken
-                  : "—"}
+                API next token:{" "}
+                {nextToken && nextToken.length ? nextToken : "—"}
               </div>
             </div>
           </section>
