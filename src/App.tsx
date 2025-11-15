@@ -14,7 +14,7 @@ type Site = {
 
 type MeetingIdentity = {
   userId: string;
-  source: string; // e.g. "ZOOM_MEETINGS_USER_ID" or "default_me"
+  source: string; // e.g. "account_recordings"
 };
 
 type RecordingSource = "phone" | "meetings";
@@ -46,7 +46,7 @@ type Recording = {
   topic?: string;
   host_name?: string;
   host_email?: string;
-  meetingId?: string; // numeric meeting id for delete API
+  meetingId?: string; // UUID for meeting delete API
 };
 
 type ApiResponse = {
@@ -97,6 +97,112 @@ const todayStr = new Date().toISOString().slice(0, 10);
 // small helper to safely string-ify values
 const S = (v: unknown) => (v == null ? "" : String(v));
 
+/** Demo mode: enabled via ?demo=1 in the URL */
+const useInitialDemoMode = (): boolean => {
+  if (typeof window === "undefined") return false;
+  try {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("demo") === "1";
+  } catch {
+    return false;
+  }
+};
+
+/** Generate ~200 fake phone recordings for demo mode */
+function generateDemoRecordings(): Recording[] {
+  const owners = [
+    { name: "Alex Parker", ext: 101 },
+    { name: "Jamie Lee", ext: 102 },
+    { name: "Morgan Smith", ext: 103 },
+    { name: "Taylor Johnson", ext: 104 },
+    { name: "Chris Walker", ext: 105 },
+    { name: "Jordan Davis", ext: 106 },
+    { name: "Riley Thompson", ext: 107 },
+    { name: "Casey Martinez", ext: 108 },
+    { name: "Drew Allen", ext: 109 },
+    { name: "Sam Nguyen", ext: 110 },
+    { name: "Avery Patel", ext: 111 },
+    { name: "Logan Rivera", ext: 112 },
+    { name: "Quinn Brooks", ext: 113 },
+    { name: "Harper Green", ext: 114 },
+    { name: "Reese Carter", ext: 115 },
+    { name: "Devon Flores", ext: 116 },
+    { name: "Skyler Reed", ext: 117 },
+    { name: "Rowan Young", ext: 118 },
+    { name: "Kendall King", ext: 119 },
+    { name: "Parker Lewis", ext: 120 },
+  ];
+
+  const sites = [
+    { id: "site-hq", name: "HQ – Irvine" },
+    { id: "site-sj", name: "San Jose" },
+    { id: "site-chi", name: "Chicago" },
+    { id: "site-phx", name: "Phoenix" },
+  ];
+
+  const randomInt = (min: number, max: number) =>
+    Math.floor(Math.random() * (max - min + 1)) + min;
+
+  const randomPhone = () =>
+    `555${randomInt(1000000, 9999999).toString().padStart(7, "0")}`;
+
+  const directions: Array<"inbound" | "outbound"> = ["inbound", "outbound"];
+  const types = ["Automatic", "On-demand"] as const;
+
+  const now = Date.now();
+  const fourteenDays = 14 * 24 * 60 * 60 * 1000;
+
+  const records: Recording[] = [];
+
+  for (let i = 0; i < 200; i++) {
+    const owner = owners[i % owners.length];
+    const site = sites[i % sites.length];
+    const direction = directions[i % directions.length];
+
+    const offsetMs = randomInt(0, fourteenDays);
+    const start = new Date(now - offsetMs);
+    const duration = randomInt(30, 1200); // 30s–20m
+
+    const callerName = direction === "inbound" ? "Customer" : owner.name;
+    const calleeName = direction === "inbound" ? owner.name : "Customer";
+
+    const callerNumber =
+      direction === "inbound" ? randomPhone() : `+1${owner.ext}00`;
+    const calleeNumber =
+      direction === "inbound" ? `+1${owner.ext}00` : randomPhone();
+
+    records.push({
+      id: `demo-${i + 1}`,
+      caller_number: callerNumber,
+      caller_number_type: 1,
+      caller_name: callerName,
+      callee_number: calleeNumber,
+      callee_number_type: 1,
+      callee_name: calleeName,
+      direction,
+      duration,
+      date_time: start.toISOString(),
+      recording_type: types[i % types.length],
+      owner: {
+        type: "user",
+        id: `demo-user-${owner.ext}`,
+        name: owner.name,
+        extension_number: owner.ext,
+      },
+      site,
+      source: "phone",
+    });
+  }
+
+  // sort newest first
+  records.sort(
+    (a, b) =>
+      new Date(b.date_time).getTime() - new Date(a.date_time).getTime()
+  );
+
+  return records;
+}
+
 const App: React.FC = () => {
   const [from, setFrom] = useState(todayStr);
   const [to, setTo] = useState(todayStr);
@@ -124,9 +230,11 @@ const App: React.FC = () => {
   const [deleteProgress, setDeleteProgress] =
     useState<DeleteProgress | null>(null);
   const [deleteMessage, setDeleteMessage] = useState<string | null>(null);
-  const [authed, setAuthed] = useState<boolean | null>(null);
-  const [authEmail, setAuthEmail] = useState<string | null>(null);
 
+  const [demoMode] = useState<boolean>(() => useInitialDemoMode());
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
+    () => new Set()
+  );
 
   // ---- helpers ----
 
@@ -187,7 +295,7 @@ const App: React.FC = () => {
       throw new Error(`HTTP ${res.status}: ${text}`);
     }
 
-    const api: MeetingApiResponse = await res.json();
+    const api: any = await res.json();
 
     const recs: Recording[] = [];
     for (const m of api.meetings ?? []) {
@@ -233,6 +341,35 @@ const App: React.FC = () => {
     setDeleteMessage(null);
 
     try {
+      if (demoMode) {
+        // Demo: generate fake data and filter by date range
+        let recs = generateDemoRecordings();
+
+        const fromDate = from ? new Date(from + "T00:00:00") : null;
+        const toDate = to ? new Date(to + "T23:59:59") : null;
+
+        if (fromDate || toDate) {
+          recs = recs.filter((r) => {
+            const d = new Date(r.date_time);
+            if (fromDate && d < fromDate) return false;
+            if (toDate && d > toDate) return false;
+            return true;
+          });
+        }
+
+        setData({
+          from,
+          to,
+          total_records: recs.length,
+          next_page_token: null,
+          recordings: recs,
+        });
+        setNextToken(null);
+        setPageIndex(0);
+        setSelectedKeys(new Set());
+        return;
+      }
+
       if (source === "phone") {
         const { api, recs } = await fetchPhonePage(tokenOverride);
 
@@ -295,39 +432,22 @@ const App: React.FC = () => {
     fetchRecordings(last);
   };
 
-    useEffect(() => {
-      const checkAuth = async () => {
-        try {
-          const res = await fetch("/api/auth/me");
-          if (res.ok) {
-            const json = await res.json();
-            setAuthed(true);
-            setAuthEmail(json.email || null);
-            // only fetch recordings once we know we're authenticated
-            fetchRecordings(null);
-          } else {
-            setAuthed(false);
-          }
-        } catch {
-          setAuthed(false);
-        }
-      };
-
-      checkAuth();
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
-
+  // Auto-load on first render
+  useEffect(() => {
+    fetchRecordings(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     const loadMeetingIdentity = async () => {
       try {
         const res = await fetch("/api/meeting/identity");
-        if (!res.ok) return; // fail silently if not configured
+        if (!res.ok) return;
 
         const json = (await res.json()) as MeetingIdentity;
         setMeetingIdentity(json);
       } catch {
-        // ignore – identity is just a nice-to-have
+        // ignore
       }
     };
 
@@ -426,30 +546,12 @@ const App: React.FC = () => {
     setSelectedKeys(new Set());
   };
 
-  if (authed === false) {
-  return (
-    <div className="app-page auth-page">
-      <div className="auth-card">
-        <h1 className="app-title">Zoom Recording Explorer</h1>
-        <p className="app-subtitle">
-          Sign in with your Zoom account to continue.
-        </p>
-        <a href="/zoom/login" className="btn-primary" style={{ marginTop: "1.5rem" }}>
-          Sign in with Zoom
-        </a>
-        <p className="auth-help">
-          You’ll be redirected to Zoom, then back here once authenticated.
-        </p>
-      </div>
-    </div>
-  );
-}
-
   const handleBulkDelete = async () => {
     if (!filteredRecordings.length || !selectedCount) return;
 
     const confirmed = window.confirm(
-      `Delete ${selectedCount} ${source === "phone" ? "phone" : "meeting"
+      `Delete ${selectedCount} ${
+        source === "phone" ? "phone" : "meeting"
       } recording(s)? This will move them to trash or permanently delete them based on your Zoom settings.`
     );
     if (!confirmed) return;
@@ -465,6 +567,25 @@ const App: React.FC = () => {
 
     if (!toDelete.length) return;
 
+    // DEMO MODE: in-memory delete only
+    if (demoMode) {
+      setData((prev) => {
+        if (!prev || !prev.recordings) return prev;
+        const remaining = prev.recordings.filter((r) => !toDelete.includes(r));
+        return {
+          ...prev,
+          recordings: remaining,
+          total_records: remaining.length,
+        };
+      });
+      setSelectedKeys(new Set());
+      setDeleteMessage(
+        `Demo delete: removed ${toDelete.length} record(s) from the table.`
+      );
+      return;
+    }
+
+    // REAL MODE: call backend delete APIs
     setDeleting(true);
     setDeleteProgress({ total: toDelete.length, done: 0 });
     setDeleteMessage(null);
@@ -494,7 +615,6 @@ const App: React.FC = () => {
               );
             }
           } else {
-            // meetings
             if (!rec.id || !rec.meetingId) {
               throw new Error(
                 "Missing meetingId or recordingId for meeting recording"
@@ -506,7 +626,7 @@ const App: React.FC = () => {
               body: JSON.stringify({
                 meetingId: rec.meetingId,
                 recordingId: rec.id,
-                action: "trash", // or "delete" to permanently delete
+                action: "trash",
               }),
             });
             if (!res.ok) {
@@ -531,7 +651,6 @@ const App: React.FC = () => {
         `Delete complete: ${success} succeeded, ${failed} failed.`
       );
 
-      // After delete, refresh data from server
       await fetchRecordings(currentToken);
       setSelectedKeys(new Set());
     } finally {
@@ -540,32 +659,140 @@ const App: React.FC = () => {
     }
   };
 
-  const paginationDisabled = false; // server-side pagination still available
+  const paginationDisabled = false;
+
+  // ----- grouping by owner (per page) -----
+
+  type PageRecord = { rec: Recording; globalIndex: number };
+
+  const pageRecordsWithIndex: PageRecord[] = pageRecords.map(
+    (rec, idxOnPage) => ({
+      rec,
+      globalIndex: pageStart + idxOnPage,
+    })
+  );
+
+  type OwnerGroup = {
+    key: string;
+    ownerLabel: string;
+    sourceLabel: string;
+    siteLabel: string;
+    items: PageRecord[];
+    count: number;
+    totalDuration: number;
+    firstDate: Date | null;
+    lastDate: Date | null;
+  };
+
+  const groupsMap = new Map<string, OwnerGroup>();
+
+  for (const item of pageRecordsWithIndex) {
+    const { rec } = item;
+    const isMeeting = rec.source === "meetings";
+
+    const ownerLabel = isMeeting
+      ? rec.host_email || rec.owner?.name || "Unknown"
+      : rec.owner?.name && rec.owner?.extension_number
+      ? `${rec.owner.name} (${rec.owner.extension_number})`
+      : rec.owner?.name || "Unknown";
+
+    const sourceLabel = isMeeting ? "Meeting" : "Phone";
+    const siteLabel = isMeeting ? "—" : rec.site?.name || "—";
+
+    const groupKey = `${sourceLabel}|${ownerLabel}`;
+
+    const dt = rec.date_time
+      ? new Date(rec.date_time)
+      : rec.end_time
+      ? new Date(rec.end_time)
+      : null;
+
+    const existing = groupsMap.get(groupKey);
+    if (!existing) {
+      groupsMap.set(groupKey, {
+        key: groupKey,
+        ownerLabel,
+        sourceLabel,
+        siteLabel,
+        items: [item],
+        count: 1,
+        totalDuration: rec.duration ?? 0,
+        firstDate: dt,
+        lastDate: dt,
+      });
+    } else {
+      existing.items.push(item);
+      existing.count += 1;
+      existing.totalDuration += rec.duration ?? 0;
+      if (dt) {
+        if (!existing.firstDate || dt < existing.firstDate) {
+          existing.firstDate = dt;
+        }
+        if (!existing.lastDate || dt > existing.lastDate) {
+          existing.lastDate = dt;
+        }
+      }
+    }
+  }
+
+  const ownerGroups = Array.from(groupsMap.values()).sort((a, b) =>
+    a.ownerLabel.localeCompare(b.ownerLabel)
+  );
+
+  const isGroupCollapsed = (groupKey: string) => collapsedGroups.has(groupKey);
+
+  const toggleGroupCollapse = (groupKey: string) => {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(groupKey)) next.delete(groupKey);
+      else next.add(groupKey);
+      return next;
+    });
+  };
+
+  const isGroupFullySelected = (group: OwnerGroup): boolean => {
+    if (!group.items.length) return false;
+    return group.items.every(({ rec, globalIndex }) =>
+      selectedKeys.has(makeRecordKey(rec, globalIndex))
+    );
+  };
+
+  const toggleGroupSelection = (group: OwnerGroup, checked: boolean) => {
+    setSelectedKeys((prev) => {
+      const next = new Set(prev);
+      for (const { rec, globalIndex } of group.items) {
+        const key = makeRecordKey(rec, globalIndex);
+        if (checked) next.add(key);
+        else next.delete(key);
+      }
+      return next;
+    });
+  };
 
   return (
     <div className="app-page">
-<header className="app-header">
-  <div className="app-header-inner">
-    <h1 className="app-title">Zoom Recording Explorer</h1>
-    <p className="app-subtitle">
-      Source: {source === "phone" ? "Phone" : "Meetings"} · {data?.from} →{" "}
-      {data?.to}
-      {meetingIdentity && source === "meetings" && (
-        <>
-          {" "}
-          · Meetings user: {meetingIdentity.userId}
-          {meetingIdentity.source === "default_me" && " (me)"}
-        </>
-      )}
-      {authEmail && (
-        <>
-          {" "}
-          · Signed in as {authEmail}
-        </>
-      )}
-    </p>
-  </div>
-</header>
+      <header className="app-header">
+        <div className="app-header-inner">
+          <h1 className="app-title">Zoom Recording Explorer</h1>
+          <p className="app-subtitle">
+            Source: {source === "phone" ? "Phone" : "Meetings"} ·{" "}
+            {data?.from ?? from} → {data?.to ?? to}
+            {meetingIdentity && source === "meetings" && (
+              <>
+                {" "}
+                · Meetings user: {meetingIdentity.userId}
+                {meetingIdentity.source === "default_me" && " (me)"}
+              </>
+            )}
+            {demoMode && (
+              <>
+                {" "}
+                · <strong>DEMO MODE</strong> (fake data)
+              </>
+            )}
+          </p>
+        </div>
+      </header>
 
       <main className="app-main">
         <div className="app-main-inner">
@@ -598,9 +825,7 @@ const App: React.FC = () => {
                   <button
                     type="button"
                     className={
-                      source === "phone"
-                        ? "btn-toggle active"
-                        : "btn-toggle"
+                      source === "phone" ? "btn-toggle active" : "btn-toggle"
                     }
                     onClick={() => {
                       setSource("phone");
@@ -614,9 +839,7 @@ const App: React.FC = () => {
                   <button
                     type="button"
                     className={
-                      source === "meetings"
-                        ? "btn-toggle active"
-                        : "btn-toggle"
+                      source === "meetings" ? "btn-toggle active" : "btn-toggle"
                     }
                     onClick={() => {
                       setSource("meetings");
@@ -737,7 +960,9 @@ const App: React.FC = () => {
                         className="delete-progress-bar-fill"
                         style={{
                           width: `${
-                            (deleteProgress.done / Math.max(deleteProgress.total, 1)) * 100
+                            (deleteProgress.done /
+                              Math.max(deleteProgress.total, 1)) *
+                            100
                           }%`,
                         }}
                       />
@@ -782,96 +1007,151 @@ const App: React.FC = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {pageRecords.map((rec, idxOnPage) => {
-                      const globalIdx = pageStart + idxOnPage;
-                      const key = makeRecordKey(rec, globalIdx);
-                      const isMeeting = rec.source === "meetings";
+                    {ownerGroups.map((group) => {
+                      const groupSelected = isGroupFullySelected(group);
+                      const collapsed = isGroupCollapsed(group.key);
 
-                      const dt = rec.date_time
-                        ? new Date(rec.date_time)
-                        : rec.end_time
-                        ? new Date(rec.end_time)
-                        : null;
-
-                      const dateDisplay = dt
-                        ? dt.toLocaleString(undefined, {
-                            year: "numeric",
-                            month: "2-digit",
-                            day: "2-digit",
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })
-                        : "—";
-
-                      const primary = isMeeting
-                        ? rec.topic || rec.caller_name || "Meeting"
-                        : rec.caller_name && rec.caller_number
-                        ? `${rec.caller_name} (${rec.caller_number})`
-                        : rec.caller_name || rec.caller_number || "—";
-
-                      const secondary = isMeeting
-                        ? rec.host_email || rec.callee_name || "—"
-                        : rec.callee_name && rec.callee_number
-                        ? `${rec.callee_name} (${rec.callee_number})`
-                        : rec.callee_name || rec.callee_number || "—";
-
-                      const ownerDisplay = isMeeting
-                        ? rec.host_email || rec.owner?.name || "—"
-                        : rec.owner?.name && rec.owner?.extension_number
-                        ? `${rec.owner.name} (${rec.owner.extension_number})`
-                        : rec.owner?.name || "—";
-
-                      const siteName = isMeeting
-                        ? "—"
-                        : rec.site?.name || "—";
-
-                      const sourceLabel = isMeeting ? "Meeting" : "Phone";
+                      const dateRangeLabel =
+                        group.firstDate && group.lastDate
+                          ? `${group.firstDate.toLocaleDateString()} → ${group.lastDate.toLocaleDateString()}`
+                          : "—";
 
                       return (
-                        <tr key={key} className="rec-row">
-                          <td>
-                            <input
-                              type="checkbox"
-                              checked={selectedKeys.has(key)}
-                              onChange={() =>
-                                toggleRowSelection(rec, globalIdx)
-                              }
-                            />
-                          </td>
-                          <td>{dateDisplay}</td>
-                          <td>{sourceLabel}</td>
-                          <td>{primary}</td>
-                          <td>{secondary}</td>
-                          <td>{ownerDisplay}</td>
-                          <td>{siteName}</td>
-                          <td>{rec.duration ?? "—"}</td>
-                          <td>{rec.recording_type || "—"}</td>
-                          <td>
-                            {rec.download_url && (
-                              <a
-                                href={`/api/phone/recordings/download?url=${encodeURIComponent(
-                                  rec.download_url
-                                )}`}
-                                className="text-sky-400 hover:underline mr-2"
-                              >
-                                Download
-                              </a>
-                            )}
-
-                            {rec.call_history_id && !isMeeting && (
+                        <React.Fragment key={group.key}>
+                          {/* Group header row */}
+                          <tr className="rec-row group-row">
+                            <td>
+                              <input
+                                type="checkbox"
+                                checked={groupSelected}
+                                onChange={(e) =>
+                                  toggleGroupSelection(
+                                    group,
+                                    e.target.checked
+                                  )
+                                }
+                              />
+                            </td>
+                            <td colSpan={9}>
                               <button
-                                className="pager-btn"
-                                onClick={() => {
-                                  alert(
-                                    "Details view coming soon for this recording."
-                                  );
+                                type="button"
+                                className="group-toggle"
+                                onClick={() => toggleGroupCollapse(group.key)}
+                                style={{
+                                  marginRight: 8,
+                                  cursor: "pointer",
+                                  border: "none",
+                                  background: "transparent",
                                 }}
                               >
-                                Details
+                                {collapsed ? "▶" : "▼"}
                               </button>
-                            )}
-                          </td>
-                        </tr>
+                              <strong>{group.ownerLabel}</strong>{" "}
+                              <span style={{ opacity: 0.8 }}>
+                                · {group.sourceLabel} · {group.count} recording
+                                {group.count !== 1 ? "s" : ""} · Total{" "}
+                                {group.totalDuration}s · {dateRangeLabel}
+                              </span>
+                            </td>
+                          </tr>
+
+                          {/* Child rows */}
+                          {!collapsed &&
+                            group.items.map(({ rec, globalIndex }) => {
+                              const key = makeRecordKey(rec, globalIndex);
+                              const isMeeting = rec.source === "meetings";
+
+                              const dt = rec.date_time
+                                ? new Date(rec.date_time)
+                                : rec.end_time
+                                ? new Date(rec.end_time)
+                                : null;
+
+                              const dateDisplay = dt
+                                ? dt.toLocaleString(undefined, {
+                                    year: "numeric",
+                                    month: "2-digit",
+                                    day: "2-digit",
+                                    hour: "2-digit",
+                                    minute: "2-digit",
+                                  })
+                                : "—";
+
+                              const primary = isMeeting
+                                ? rec.topic || rec.caller_name || "Meeting"
+                                : rec.caller_name && rec.caller_number
+                                ? `${rec.caller_name} (${rec.caller_number})`
+                                : rec.caller_name || rec.caller_number || "—";
+
+                              const secondary = isMeeting
+                                ? rec.host_email || rec.callee_name || "—"
+                                : rec.callee_name && rec.callee_number
+                                ? `${rec.callee_name} (${rec.callee_number})`
+                                : rec.callee_name || rec.callee_number || "—";
+
+                              const ownerDisplay = isMeeting
+                                ? rec.host_email || rec.owner?.name || "—"
+                                : rec.owner?.name &&
+                                  rec.owner?.extension_number
+                                ? `${rec.owner.name} (${rec.owner.extension_number})`
+                                : rec.owner?.name || "—";
+
+                              const siteName = isMeeting
+                                ? "—"
+                                : rec.site?.name || "—";
+
+                              const sourceLabel = isMeeting
+                                ? "Meeting"
+                                : "Phone";
+
+                              return (
+                                <tr key={key} className="rec-row">
+                                  <td>
+                                    <input
+                                      type="checkbox"
+                                      checked={selectedKeys.has(key)}
+                                      onChange={() =>
+                                        toggleRowSelection(rec, globalIndex)
+                                      }
+                                    />
+                                  </td>
+                                  <td>{dateDisplay}</td>
+                                  <td>{sourceLabel}</td>
+                                  <td>{primary}</td>
+                                  <td>{secondary}</td>
+                                  <td>{ownerDisplay}</td>
+                                  <td>{siteName}</td>
+                                  <td>{rec.duration ?? "—"}</td>
+                                  <td>{rec.recording_type || "—"}</td>
+                                  <td>
+                                    {rec.download_url && !demoMode && (
+                                      <a
+                                        href={`/api/phone/recordings/download?url=${encodeURIComponent(
+                                          rec.download_url
+                                        )}`}
+                                        className="text-sky-400 hover:underline mr-2"
+                                      >
+                                        Download
+                                      </a>
+                                    )}
+
+                                    {rec.call_history_id && !isMeeting && (
+                                      <button
+                                        className="pager-btn"
+                                        onClick={() => {
+                                          alert(
+                                            "Details view coming soon for this recording."
+                                          );
+                                        }}
+                                      >
+                                        Details
+                                      </button>
+                                    )}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                        </React.Fragment>
                       );
                     })}
                   </tbody>

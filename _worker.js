@@ -1,4 +1,4 @@
-// _worker.js – Zoom Phone Recording Explorer backend
+// _worker.js – Zoom Phone Recording Explorer backend (no user OAuth, supports phone + meeting recordings)
 
 const ZOOM_API_BASE = "https://api.zoom.us/v2";
 const ZOOM_OAUTH_TOKEN_URL = "https://zoom.us/oauth/token";
@@ -69,7 +69,7 @@ async function handleGetRecordings(req, env) {
   });
 }
 
-/* -------------------- DELETE MEETING RECORDINGS -------------------- */
+/* -------------------- DELETE PHONE RECORDINGS -------------------- */
 
 async function handleDeletePhoneRecording(req, env) {
   if (req.method !== "POST") {
@@ -90,9 +90,7 @@ async function handleDeletePhoneRecording(req, env) {
 
   const token = await getZoomAccessToken(env);
 
-  const zoomUrl = `${ZOOM_API_BASE}/phone/recordings/${encodeURIComponent(
-    recordingId
-  )}`;
+  const zoomUrl = `${ZOOM_API_BASE}/phone/recordings/${encodeURIComponent(recordingId)}`;
 
   const zoomRes = await fetch(zoomUrl, {
     method: "DELETE",
@@ -102,14 +100,12 @@ async function handleDeletePhoneRecording(req, env) {
   const status = zoomRes.status;
   const text = await zoomRes.text();
 
-  // Log to Cloudflare tail
   console.log("PHONE DELETE", {
     zoomUrl,
     status,
     body: text.slice(0, 500),
   });
 
-  // If Zoom returns JSON with an error code/message, treat it as failure
   if (text) {
     try {
       const z = JSON.parse(text);
@@ -123,7 +119,7 @@ async function handleDeletePhoneRecording(req, env) {
         });
       }
     } catch {
-      // body wasn't JSON; fall through
+      // non-JSON body
     }
   }
 
@@ -135,13 +131,15 @@ async function handleDeletePhoneRecording(req, env) {
     });
   }
 
-  // Zoom often returns 204 with no body on success
+  // Zoom often returns 204 on success
   return json(200, {
     ok: true,
     zoomStatus: status,
     raw: text || null,
   });
 }
+
+/* -------------------- DELETE MEETING RECORDINGS -------------------- */
 
 async function handleDeleteMeetingRecording(req, env) {
   if (req.method !== "POST") {
@@ -155,9 +153,9 @@ async function handleDeleteMeetingRecording(req, env) {
     return json(400, { error: "Invalid JSON body" });
   }
 
-  const meetingId = body?.meetingId;   // UUID string now
+  const meetingId = body?.meetingId; // UUID string
   const recordingId = body?.recordingId;
-  const action = body?.action || "trash"; // or "delete" to bypass trash
+  const action = body?.action || "trash"; // or "delete"
 
   if (!meetingId || !recordingId) {
     return json(400, {
@@ -167,11 +165,9 @@ async function handleDeleteMeetingRecording(req, env) {
 
   const token = await getZoomAccessToken(env);
 
-  // Zoom notes: if UUID starts with "/" or contains "//", you must double-encode
-  // We'll do a generic "double encode when needed" to be safe.
+  // Zoom double-encoding rules for UUID
   const rawMeetingId = String(meetingId);
   let meetingPathId = rawMeetingId;
-
   if (meetingPathId.startsWith("/") || meetingPathId.includes("//")) {
     meetingPathId = encodeURIComponent(meetingPathId); // first encode
   }
@@ -180,7 +176,6 @@ async function handleDeleteMeetingRecording(req, env) {
   const recordingPathId = encodeURIComponent(String(recordingId));
 
   let zoomUrl = `${ZOOM_API_BASE}/meetings/${meetingPathId}/recordings/${recordingPathId}`;
-
   const params = new URLSearchParams();
   params.set("action", action);
   zoomUrl += `?${params.toString()}`;
@@ -199,7 +194,6 @@ async function handleDeleteMeetingRecording(req, env) {
     body: text.slice(0, 500),
   });
 
-  // If Zoom returns JSON with code/message, surface it as an error
   if (text) {
     try {
       const z = JSON.parse(text);
@@ -213,7 +207,7 @@ async function handleDeleteMeetingRecording(req, env) {
         });
       }
     } catch {
-      // not JSON, ignore
+      // non-JSON
     }
   }
 
@@ -232,36 +226,25 @@ async function handleDeleteMeetingRecording(req, env) {
   });
 }
 
-
-/* -------------------- MEETING RECORDINGS (REAL) -------------------- */
-
-/* -------------------- MEETING RECORDINGS (ACCOUNT-LEVEL) -------------------- */
-
-/* -------------------- MEETING RECORDINGS (USER-AGGREGATED) -------------------- */
-
-/* -------------------- MEETING RECORDINGS (USER-AGGREGATED + DEBUG) -------------------- */
-
-/* -------------------- MEETING RECORDINGS (USER-AGGREGATED, TABLE-FRIENDLY) -------------------- */
-
 /* -------------------- MEETING RECORDINGS (USER-AGGREGATED, SEARCHABLE) -------------------- */
 
 async function handleGetMeetingRecordings(req, env) {
   try {
-    const url   = new URL(req.url);
+    const url = new URL(req.url);
 
     // Base filters
-    const from  = url.searchParams.get("from")  || "";
-    const to    = url.searchParams.get("to")    || "";
+    const from = url.searchParams.get("from") || "";
+    const to = url.searchParams.get("to") || "";
     const debug = url.searchParams.get("debug") || ""; // "users" | "user-recordings" | ""
 
-    // Search filters
+    // Search filters (currently used on backend, but UI mostly filters client-side)
     const ownerFilter = (url.searchParams.get("owner_email") || "").toLowerCase();
-    const topicFilter = (url.searchParams.get("topic")       || "").toLowerCase();
-    const q           = (url.searchParams.get("q")           || "").toLowerCase();
+    const topicFilter = (url.searchParams.get("topic") || "").toLowerCase();
+    const q = (url.searchParams.get("q") || "").toLowerCase();
 
     const token = await getZoomAccessToken(env);
 
-    // 1) Get ALL active users (with pagination)
+    // 1) Get all active users with pagination
     const users = [];
     let nextPageToken = "";
 
@@ -297,7 +280,6 @@ async function handleGetMeetingRecordings(req, env) {
       nextPageToken = usersData.next_page_token || "";
     } while (nextPageToken);
 
-    // 🔍 DEBUG: show just user list
     if (debug === "users") {
       return new Response(
         JSON.stringify(
@@ -305,7 +287,7 @@ async function handleGetMeetingRecordings(req, env) {
             from,
             to,
             total_users: users.length,
-            users: users.map(u => ({
+            users: users.map((u) => ({
               id: u.id,
               email: u.email,
               first_name: u.first_name,
@@ -347,7 +329,7 @@ async function handleGetMeetingRecordings(req, env) {
       const u = new URL(`${ZOOM_API_BASE}/users/${encodeURIComponent(userId)}/recordings`);
       u.searchParams.set("page_size", "50");
       if (from) u.searchParams.set("from", from);
-      if (to)   u.searchParams.set("to", to);
+      if (to) u.searchParams.set("to", to);
       return u.toString();
     };
 
@@ -408,7 +390,6 @@ async function handleGetMeetingRecordings(req, env) {
             const primary = files[0] || null;
 
             meetings.push({
-              // Core meeting fields from Zoom schema
               account_id: m.account_id,
               duration: m.duration,
               host_id: m.host_id,
@@ -423,15 +404,12 @@ async function handleGetMeetingRecordings(req, env) {
               auto_delete_date: m.auto_delete_date,
               recording_play_passcode: m.recording_play_passcode,
 
-              // Owner context (helps UI filter)
               owner_email: user.email,
 
-              // “Table friendly” derived fields
               primary_file_type: primary?.file_type || null,
               primary_file_extension: primary?.file_extension || null,
 
-              // Trimmed recording_files
-              recording_files: files.map(f => ({
+              recording_files: files.map((f) => ({
                 id: f.id,
                 file_type: f.file_type,
                 file_extension: f.file_extension,
@@ -459,7 +437,6 @@ async function handleGetMeetingRecordings(req, env) {
       Array.from({ length: Math.min(concurrency, users.length) }, () => worker())
     );
 
-    // 🔍 DEBUG: per-user counts only
     if (debug === "user-recordings") {
       return new Response(
         JSON.stringify(
@@ -483,28 +460,24 @@ async function handleGetMeetingRecordings(req, env) {
       );
     }
 
-    // 4) Apply search filters (owner_email, topic, q)
+    // 4) Apply backend filters if needed (UI also filters)
     let filtered = meetings;
 
     if (ownerFilter) {
-      filtered = filtered.filter(m =>
+      filtered = filtered.filter((m) =>
         (m.owner_email || "").toLowerCase().includes(ownerFilter)
       );
     }
 
     if (topicFilter) {
-      filtered = filtered.filter(m =>
+      filtered = filtered.filter((m) =>
         (m.topic || "").toLowerCase().includes(topicFilter)
       );
     }
 
     if (q) {
-      filtered = filtered.filter(m => {
-        const bag = [
-          m.topic || "",
-          m.owner_email || "",
-          m.host_id || "",
-        ].join(" ");
+      filtered = filtered.filter((m) => {
+        const bag = [m.topic || "", m.owner_email || "", m.host_id || ""].join(" ");
         return bag.toLowerCase().includes(q);
       });
     }
@@ -514,7 +487,7 @@ async function handleGetMeetingRecordings(req, env) {
     const respBody = {
       from,
       to,
-      next_page_token: "",          // everything in one shot for now
+      next_page_token: "",
       page_count: totalRecords ? 1 : 0,
       page_size: totalRecords,
       total_records: totalRecords,
@@ -522,7 +495,7 @@ async function handleGetMeetingRecordings(req, env) {
     };
 
     if (errors.length) {
-      respBody._errors = errors;   // extra debug info, UI can ignore
+      respBody._errors = errors;
     }
 
     return new Response(JSON.stringify(respBody), {
@@ -530,7 +503,7 @@ async function handleGetMeetingRecordings(req, env) {
       headers: {
         "Content-Type": "application/json",
         "Access-Control-Allow-Origin": "*",
-        },
+      },
     });
   } catch (err) {
     return new Response(
@@ -558,7 +531,7 @@ async function handleGetMeetingIdentity(req, env) {
   );
 }
 
-/* -------------------- DOWNLOAD PROXY (OPTIONAL) -------------------- */
+/* -------------------- DOWNLOAD PROXY (PHONE) -------------------- */
 
 async function handleDownloadRecording(req, env) {
   const url = new URL(req.url);
@@ -597,158 +570,12 @@ async function handleDownloadRecording(req, env) {
   return new Response(zoomRes.body, { status: zoomRes.status, headers });
 }
 
+/* -------------------- JSON HELPER -------------------- */
+
 function json(status, obj) {
   return new Response(JSON.stringify(obj), {
     status,
     headers: { "Content-Type": "application/json" },
-  });
-}
-
-async function handleZoomLogin(req, env) {
-  const clientId = env.ZOOM_OAUTH_CLIENT_ID;
-  const redirectUri =
-    env.ZOOM_OAUTH_REDIRECT_URI ||
-    "https://recordingmgmt.itcontact-521.workers.dev/zoom/callback";
-
-  if (!clientId) {
-    return json(500, { error: "Missing ZOOM_OAUTH_CLIENT_ID" });
-  }
-
-  const state = crypto.randomUUID(); // optionally store in KV for CSRF
-
-  const params = new URLSearchParams();
-  params.set("response_type", "code");
-  params.set("client_id", clientId);
-  params.set("redirect_uri", redirectUri);
-  // minimum scopes just to identify the user; you can add more later if needed
-  params.set("scope","user:read:user:master");
-  params.set("state", state);
-
-  const authUrl = `https://zoom.us/oauth/authorize?${params.toString()}`;
-  return Response.redirect(authUrl, 302);
-}
-
-async function handleZoomCallback(req, env) {
-  const url = new URL(req.url);
-  const code = url.searchParams.get("code");
-  const err = url.searchParams.get("error");
-
-  if (err) {
-    return new Response(`Zoom auth error: ${err}`, { status: 400 });
-  }
-  if (!code) {
-    return new Response("Missing code", { status: 400 });
-  }
-
-  const clientId = env.ZOOM_OAUTH_CLIENT_ID;
-  const clientSecret = env.ZOOM_OAUTH_CLIENT_SECRET;
-  const redirectUri =
-    env.ZOOM_OAUTH_REDIRECT_URI ||
-    "https://recordingmgmt.itcontact-521.workers.dev/zoom/callback";
-
-  if (!clientId || !clientSecret) {
-    return new Response("Missing Zoom OAuth client config", { status: 500 });
-  }
-
-  // Exchange code for tokens
-  const basicAuth = btoa(`${clientId}:${clientSecret}`);
-
-  const tokenRes = await fetch("https://zoom.us/oauth/token", {
-    method: "POST",
-    headers: {
-      Authorization: `Basic ${basicAuth}`,
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body: new URLSearchParams({
-      grant_type: "authorization_code",
-      code,
-      redirect_uri: redirectUri,
-    }).toString(),
-  });
-
-  const tokenText = await tokenRes.text();
-  if (!tokenRes.ok) {
-    console.error("Zoom token exchange failed", tokenRes.status, tokenText);
-    return new Response("Zoom token exchange failed", { status: 500 });
-  }
-
-  let tokenJson;
-  try {
-    tokenJson = JSON.parse(tokenText);
-  } catch {
-    console.error("Zoom token JSON parse failed", tokenText);
-    return new Response("Bad Zoom token response", { status: 500 });
-  }
-
-  const accessToken = tokenJson.access_token;
-  if (!accessToken) {
-    console.error("No access_token in Zoom response", tokenJson);
-    return new Response("No access_token from Zoom", { status: 500 });
-  }
-
-  // Fetch current user profile
-  const meRes = await fetch("https://api.zoom.us/v2/users/me", {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-
-  const meText = await meRes.text();
-  if (!meRes.ok) {
-    console.error("Zoom /users/me failed", meRes.status, meText);
-    return new Response("Zoom /users/me failed", { status: 500 });
-  }
-
-  let me;
-  try {
-    me = JSON.parse(meText);
-  } catch {
-    console.error("Zoom /users/me JSON parse failed", meText);
-    return new Response("Bad /users/me response", { status: 500 });
-  }
-
-  const email = (me.email || "").toLowerCase();
-  const zoomUserId = me.id;
-
-  if (!email || !zoomUserId) {
-    console.error("Missing email or id from Zoom user", me);
-    return new Response("Bad Zoom user profile", { status: 500 });
-  }
-
-  // Optional: restrict by domain
-  const allowedDomains = (env.ZOOM_ALLOWED_EMAIL_DOMAINS || "")
-    .split(",")
-    .map((d) => d.trim().toLowerCase())
-    .filter(Boolean);
-
-  if (
-    allowedDomains.length > 0 &&
-    !allowedDomains.some((d) => email.endsWith(`@${d}`))
-  ) {
-    console.error("Zoom user email not allowed", email, allowedDomains);
-    return new Response("Unauthorized domain", { status: 403 });
-  }
-
-  // Create session (reuse AUTH_SESSIONS)
-  const sid = crypto.randomUUID();
-  const ttlSeconds = 60 * 60 * 8;
-
-  await env.AUTH_SESSIONS.put(
-    `sess:${sid}`,
-    JSON.stringify({
-      email,
-      zoomUserId,
-      zoomAccessToken: accessToken, // only if you want per-user token; else omit
-    }),
-    { expirationTtl: ttlSeconds }
-  );
-
-  const cookie = makeSessionCookie(sid, ttlSeconds);
-
-  return new Response(null, {
-    status: 302,
-    headers: {
-      "Set-Cookie": cookie,
-      Location: "/", // back to app
-    },
   });
 }
 
@@ -768,17 +595,17 @@ export default {
       return handleDownloadRecording(req, env);
     }
 
-     // NEW: delete a single phone recording
+    // Delete a single phone recording
     if (url.pathname === "/api/phone/recordings/delete" && req.method === "POST") {
       return handleDeletePhoneRecording(req, env);
     }
 
-    // Meeting recordings (stub)
+    // Meeting recordings (aggregated)
     if (url.pathname === "/api/meeting/recordings" && req.method === "GET") {
       return handleGetMeetingRecordings(req, env);
     }
 
-        // NEW: delete a single meeting recording file
+    // Delete a single meeting recording file
     if (url.pathname === "/api/meeting/recordings/delete" && req.method === "POST") {
       return handleDeleteMeetingRecording(req, env);
     }
@@ -788,18 +615,7 @@ export default {
       return handleGetMeetingIdentity(req, env);
     }
 
-    if (url.pathname === "/zoom/login") {
-    return handleZoomLogin(req, env);
-    }
-    if (url.pathname === "/zoom/callback") {
-    return handleZoomCallback(req, env);
-    }
-    if (url.pathname === "/api/auth/me") {
-    // reuse your requireAuth() + return email, zoomUserId, etc.
-    return handleAuthMe(req, env);
-    }
-
-    // Asset serving (your React UI)
+    // Asset serving (React UI)
     if (env.ASSETS) {
       return env.ASSETS.fetch(req);
     }
