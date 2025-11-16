@@ -293,7 +293,7 @@ const App: React.FC = () => {
     return { api, recs };
   };
 
-  const fetchMeetingPage = async (tokenOverride: string | null) => {
+    const fetchMeetingPage = async (tokenOverride: string | null) => {
     const params = new URLSearchParams();
     params.set("from", from);
     params.set("to", to);
@@ -313,8 +313,33 @@ const App: React.FC = () => {
 
     const api: MeetingApiResponse = await res.json();
 
+    // 🔍 Debug: log a small sample of the raw payload
+    console.debug("Meeting API raw sample", {
+      from: api.from,
+      to: api.to,
+      count: api.meetings?.length ?? 0,
+      first: api.meetings?.[0],
+    });
+
     const recs: Recording[] = [];
+
     for (const m of api.meetings ?? []) {
+      // m comes from the worker; it may have camel or snake names, so be defensive
+      const mm: any = m;
+
+      const hostEmail: string =
+        mm.hostEmail || // from worker attachHostsToRecordings
+        mm.host_email || // if Zoom ever adds snake_case host email
+        mm.owner_email || // from worker meeting aggregation
+        "";
+
+      const hostName: string =
+        mm.hostName || // from worker attachHostsToRecordings
+        mm.owner_name || // from worker
+        hostEmail || // fall back to email
+        mm.topic || // or topic
+        "Unknown";
+
       for (const f of m.recording_files ?? []) {
         recs.push({
           id:
@@ -329,20 +354,26 @@ const App: React.FC = () => {
           duration: m.duration ?? 0,
           recording_type: f.file_type || "Recording",
           download_url: f.download_url,
+
+          // Show topic as the "primary" label
           caller_name: m.topic,
-          callee_name: m.host_email,
+
+          // Secondary line: host email / name
+          callee_name: hostEmail || hostName,
+
           owner: {
             type: "user",
             id: m.host_id,
-            name: m.host_email,
+            name: hostName || hostEmail || "Unknown",
           },
+
           site: { id: "", name: "Meeting" },
           direction: "meeting",
           disclaimer_status: undefined,
           source: "meetings",
           topic: m.topic,
-          host_name: m.host_email,
-          host_email: m.host_email,
+          host_name: hostName,
+          host_email: hostEmail,
           meetingId: m.uuid,
         });
       }
