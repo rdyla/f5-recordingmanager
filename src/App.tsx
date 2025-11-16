@@ -91,9 +91,31 @@ type MeetingApiResponse = {
   meetings?: MeetingItem[];
 };
 
+type PageRecord = { rec: Recording; globalIndex: number };
+
+const pageRecordsWithIndex: PageRecord[] = pageRecords.map(
+  (rec, idxOnPage) => ({
+    rec,
+    globalIndex: pageStart + idxOnPage,
+  })
+);
+
 type DeleteProgress = {
   total: number;
   done: number;
+};
+
+type OwnerGroup = {
+  key: string;
+  ownerLabel: string;
+  sourceLabel: string;
+  siteLabel: string;
+  items: PageRecord[];
+  count: number;
+  totalDuration: number;
+  totalSizeBytes: number;
+  firstDate: Date | null;
+  lastDate: Date | null;
 };
 
 const todayStr = new Date().toISOString().slice(0, 10);
@@ -737,18 +759,6 @@ const App: React.FC = () => {
     })
   );
 
-  type OwnerGroup = {
-    key: string;
-    ownerLabel: string;
-    sourceLabel: string;
-    siteLabel: string;
-    items: PageRecord[];
-    count: number;
-    totalDuration: number;
-    firstDate: Date | null;
-    lastDate: Date | null;
-  };
-
   const groupsMap = new Map<string, OwnerGroup>();
 
   for (const item of pageRecordsWithIndex) {
@@ -1144,8 +1154,8 @@ const App: React.FC = () => {
                               <strong>{group.ownerLabel}</strong>{" "}
                               <span style={{ opacity: 0.8 }}>
                                 · {group.sourceLabel} · {group.count} recording
-                                {group.count !== 1 ? "s" : ""} · Total{" "}
-                                {group.totalDuration}s · {dateRangeLabel}
+                                {group.count !== 1 ? "s" : ""} · Total size{" "}
+                                {formatBytes(group.totalSizeBytes)} · {dateRangeLabel}
                               </span>
                             </td>
                           </tr>
