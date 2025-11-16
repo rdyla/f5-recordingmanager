@@ -91,31 +91,9 @@ type MeetingApiResponse = {
   meetings?: MeetingItem[];
 };
 
-type PageRecord = { rec: Recording; globalIndex: number };
-
-const pageRecordsWithIndex: PageRecord[] = pageRecords.map(
-  (rec, idxOnPage) => ({
-    rec,
-    globalIndex: pageStart + idxOnPage,
-  })
-);
-
 type DeleteProgress = {
   total: number;
   done: number;
-};
-
-type OwnerGroup = {
-  key: string;
-  ownerLabel: string;
-  sourceLabel: string;
-  siteLabel: string;
-  items: PageRecord[];
-  count: number;
-  totalDuration: number;
-  totalSizeBytes: number;
-  firstDate: Date | null;
-  lastDate: Date | null;
 };
 
 const todayStr = new Date().toISOString().slice(0, 10);
@@ -247,7 +225,7 @@ function generateDemoRecordings(from?: string, to?: string): Recording[] {
       },
       site,
       source: "phone",
-      file_size: undefined, // demo: we can leave undefined or generate fake sizes if desired
+      file_size: undefined, // could randomize if you want fake sizes
     });
   }
 
@@ -350,7 +328,6 @@ const App: React.FC = () => {
 
     const api: MeetingApiResponse = await res.json();
 
-    // 🔍 Debug: log a small sample of the raw payload
     console.debug("Meeting API raw sample", {
       from: api.from,
       to: api.to,
@@ -361,20 +338,19 @@ const App: React.FC = () => {
     const recs: Recording[] = [];
 
     for (const m of api.meetings ?? []) {
-      // m comes from the worker; it may have camel or snake names, so be defensive
       const mm: any = m;
 
       const hostEmail: string =
-        mm.hostEmail || // from worker attachHostsToRecordings
-        mm.host_email || // if Zoom ever adds snake_case host email
-        mm.owner_email || // from worker meeting aggregation
+        mm.hostEmail ||
+        mm.host_email ||
+        mm.owner_email ||
         "";
 
       const hostName: string =
-        mm.hostName || // from worker attachHostsToRecordings
-        mm.owner_name || // from worker
-        hostEmail || // fall back to email
-        mm.topic || // or topic
+        mm.hostName ||
+        mm.owner_name ||
+        hostEmail ||
+        mm.topic ||
         "Unknown";
 
       for (const f of m.recording_files ?? []) {
@@ -391,15 +367,10 @@ const App: React.FC = () => {
           duration: m.duration ?? 0,
           recording_type: f.file_type || "Recording",
           download_url: f.download_url,
-
-          // Size in bytes (from worker / Zoom)
           file_size:
             typeof f.file_size === "number" ? f.file_size : undefined,
 
-          // Show topic as the "primary" label
           caller_name: m.topic,
-
-          // Secondary line: host email / name
           callee_name: hostEmail || hostName,
 
           owner: {
@@ -430,7 +401,6 @@ const App: React.FC = () => {
 
     try {
       if (demoMode) {
-        // Demo: generate ~200 fake records within [from,to] (or last 14 days if unset)
         const recs = generateDemoRecordings(from, to);
 
         setData({
@@ -507,7 +477,6 @@ const App: React.FC = () => {
     fetchRecordings(last);
   };
 
-  // Auto-load on first render
   useEffect(() => {
     fetchRecordings(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -635,7 +604,6 @@ const App: React.FC = () => {
     );
     if (!confirmed) return;
 
-    // Build flat list of selected records (from filtered set, not only current page)
     const toDelete: Recording[] = [];
     filteredRecordings.forEach((rec, idx) => {
       const key = makeRecordKey(rec, idx);
@@ -646,7 +614,6 @@ const App: React.FC = () => {
 
     if (!toDelete.length) return;
 
-    // In BOTH real + demo mode, show progress bar
     setDeleting(true);
     setDeleteProgress({ total: toDelete.length, done: 0 });
     setDeleteMessage(null);
@@ -660,11 +627,9 @@ const App: React.FC = () => {
 
         try {
           if (demoMode) {
-            // DEMO MODE: simulate work with a tiny delay
             await new Promise((resolve) => setTimeout(resolve, 40));
             success += 1;
           } else {
-            // REAL MODE: call backend delete APIs
             if (source === "phone") {
               if (!rec.id) {
                 throw new Error("Missing recording id for phone recording");
@@ -716,7 +681,6 @@ const App: React.FC = () => {
       }
 
       if (demoMode) {
-        // Actually remove them from the in-memory dataset
         setData((prev) => {
           if (!prev || !prev.recordings) return prev;
           const remaining = prev.recordings.filter(
@@ -736,7 +700,6 @@ const App: React.FC = () => {
         setDeleteMessage(
           `Delete complete: ${success} succeeded, ${failed} failed.`
         );
-        // After real delete, refresh data from server
         await fetchRecordings(currentToken);
         setSelectedKeys(new Set());
       }
@@ -753,11 +716,24 @@ const App: React.FC = () => {
   type PageRecord = { rec: Recording; globalIndex: number };
 
   const pageRecordsWithIndex: PageRecord[] = pageRecords.map(
-    (rec, idxOnPage) => ({
+    (rec: Recording, idxOnPage: number) => ({
       rec,
       globalIndex: pageStart + idxOnPage,
     })
   );
+
+  type OwnerGroup = {
+    key: string;
+    ownerLabel: string;
+    sourceLabel: string;
+    siteLabel: string;
+    items: PageRecord[];
+    count: number;
+    totalDuration: number;
+    totalSizeBytes: number;
+    firstDate: Date | null;
+    lastDate: Date | null;
+  };
 
   const groupsMap = new Map<string, OwnerGroup>();
 
@@ -792,6 +768,7 @@ const App: React.FC = () => {
         items: [item],
         count: 1,
         totalDuration: rec.duration ?? 0,
+        totalSizeBytes: rec.file_size ?? 0,
         firstDate: dt,
         lastDate: dt,
       });
@@ -799,6 +776,7 @@ const App: React.FC = () => {
       existing.items.push(item);
       existing.count += 1;
       existing.totalDuration += rec.duration ?? 0;
+      existing.totalSizeBytes += rec.file_size ?? 0;
       if (dt) {
         if (!existing.firstDate || dt < existing.firstDate) {
           existing.firstDate = dt;
@@ -814,7 +792,6 @@ const App: React.FC = () => {
     a.ownerLabel.localeCompare(b.ownerLabel)
   );
 
-  // Collapse / expand all groups on the current page
   const collapseAllGroups = () => {
     setCollapsedGroups(new Set(ownerGroups.map((g) => g.key)));
   };
@@ -1057,7 +1034,6 @@ const App: React.FC = () => {
                   </div>
                 )}
 
-                {/* Group expand/collapse */}
                 {ownerGroups.length > 0 && (
                   <>
                     <button
@@ -1123,7 +1099,6 @@ const App: React.FC = () => {
 
                       return (
                         <React.Fragment key={group.key}>
-                          {/* Group header row */}
                           <tr className="rec-row group-row">
                             <td>
                               <input
@@ -1155,12 +1130,12 @@ const App: React.FC = () => {
                               <span style={{ opacity: 0.8 }}>
                                 · {group.sourceLabel} · {group.count} recording
                                 {group.count !== 1 ? "s" : ""} · Total size{" "}
-                                {formatBytes(group.totalSizeBytes)} · {dateRangeLabel}
+                                {formatBytes(group.totalSizeBytes)} ·{" "}
+                                {dateRangeLabel}
                               </span>
                             </td>
                           </tr>
 
-                          {/* Child rows */}
                           {!collapsed &&
                             group.items.map(({ rec, globalIndex }) => {
                               const key = makeRecordKey(rec, globalIndex);
