@@ -1236,8 +1236,6 @@ const App: React.FC = () => {
 
                               const sizeDisplay = formatBytes(rec.file_size);
 
-                              const sizeDisplay = formatBytes(rec.file_size);
-
                               // Meeting vs phone files summary
                               let filesDisplay = "—";
                               if (isMeeting) {
