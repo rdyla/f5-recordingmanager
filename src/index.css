@@ -44,6 +44,10 @@ body {
 .app-main {
   flex: 1;
   padding: 20px 24px 32px;
+  /* NEW: make main area a flex column and keep it inside viewport */
+  display: flex;
+  flex-direction: column;
+  min-height: 0; /* important for nested flex scrolling */
 }
 
 .app-main-inner {
@@ -52,9 +56,9 @@ body {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  flex: 1;       /* NEW: fill vertical space */
+  min-height: 0; /* let children scroll */
 }
-
-/* ---- Cards ---- */
 
 .app-card {
   background-color: #020617;
@@ -62,47 +66,39 @@ body {
   border-radius: 16px;
   padding: 16px 20px;
   box-shadow: 0 18px 40px rgba(15, 23, 42, 0.85);
-}
 
-
-/* ---- UI improvement: fix scroll height and width to view window */
-/* Make main content fill screen */
-.app-main {
-  height: calc(100vh - 120px); /* Adjust header height subtraction if needed */
-  overflow: hidden;
+  /* NEW: make card itself a flex column */
   display: flex;
   flex-direction: column;
+  flex: 1;
+  min-height: 0;
 }
 
 /* Force table wrapper to use available height */
-.table-wrapper { 
-  flex: 1;
-  overflow: auto; /* vertical AND horizontal together */
-  padding-bottom: 4px;
-} 
-
-/* .table-wrapper {
-  flex: 1;
-  overflow: auto;
-  background: #f9fafb;
+.table-wrapper {
+  margin-top: 4px;
+  flex: 1 1 auto;                         /* take remaining height in card */
+  min-height: 0;
+  max-height: 100%;                       /* don’t grow past card */
+  overflow: auto;                         /* vertical + horizontal scroll inside */
   border-radius: 8px;
-  border: 1px solid #e3e5e8;
-} */
-
-
-/* Allow table to expand horizontally without squishing */
-.rec-table {
-  width: max-content;      /* expands infinitely with columns */
-  min-width: 100%;         /* never smaller than the viewport */
-  border-collapse: collapse;
 }
 
-/* .rec-table th,
-.rec-table td {
-  padding: 8px 14px;
-  white-space: nowrap; /* prevents ugly wrapping 
-} */
+/* Let the table fill width and handle columns comfortably */
+.rec-table {
+  border-collapse: collapse;
+  font-size: 13px;
+  width: 100%;
+  table-layout: auto;                     /* let columns size naturally */
+  min-width: 900px;                       /* reasonable width so no squish */
+}
 
+.rec-table th,
+.rec-table td {
+  padding: 6px 10px;
+  text-align: left;
+  white-space: nowrap;
+}
 
 /* ---- Filters row ---- */
 
