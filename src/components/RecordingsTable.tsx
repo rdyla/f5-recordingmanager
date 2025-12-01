@@ -47,10 +47,12 @@ const RecordingsTable: React.FC<RecordingsTableProps> = ({
             <th>Primary</th>
             <th>Owner / Host</th>
             <th>Site</th>
-            <th>Auto-delete</th>
             <th>Files</th>
             <th>Size</th>
             <th>Type</th>
+
+            {/* NEW COLUMN */}
+            <th>Auto-delete date</th>
           </tr>
         </thead>
 
@@ -71,7 +73,9 @@ const RecordingsTable: React.FC<RecordingsTableProps> = ({
                     <input
                       type="checkbox"
                       checked={groupSelected}
-                      onChange={(e) => toggleGroupSelection(group, e.target.checked)}
+                      onChange={(e) =>
+                        toggleGroupSelection(group, e.target.checked)
+                      }
                     />
                   </td>
                   <td colSpan={9}>
@@ -134,17 +138,6 @@ const RecordingsTable: React.FC<RecordingsTableProps> = ({
                     const sourceLabel = isMeeting ? "Meeting" : "Phone";
                     const sizeDisplay = formatBytes(rec.file_size);
 
-                    // Auto-delete display (meetings only)
-                    const autoDeleteDisplay = isMeeting
-                      ? rec.autoDelete == null
-                        ? "—"
-                        : rec.autoDelete
-                        ? rec.autoDeleteDate
-                          ? `On (${rec.autoDeleteDate})`
-                          : "On"
-                        : "Off"
-                      : "—";
-
                     let filesDisplay: React.ReactNode = "—";
 
                     if (isMeeting) {
@@ -178,7 +171,8 @@ const RecordingsTable: React.FC<RecordingsTableProps> = ({
                             : "recording";
 
                           const ext =
-                            (f.file_extension || f.file_type || "").toLowerCase() || "dat";
+                            (f.file_extension || f.file_type || "").toLowerCase() ||
+                            "dat";
 
                           const filename = `${safeTopic}_${dtPart}.${ext}`;
 
@@ -239,10 +233,12 @@ const RecordingsTable: React.FC<RecordingsTableProps> = ({
                         <td>{primary}</td>
                         <td>{ownerDisplay}</td>
                         <td>{siteName}</td>
-                        <td>{autoDeleteDisplay}</td>
                         <td>{filesDisplay}</td>
                         <td>{sizeDisplay}</td>
                         <td>{rec.recording_type || "—"}</td>
+
+                        {/* NEW: Auto-delete date cell */}
+                        <td>{isMeeting && rec.autoDeleteDate ? rec.autoDeleteDate : ""}</td>
                       </tr>
                     );
                   })}
