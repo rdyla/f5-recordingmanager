@@ -316,8 +316,6 @@ async function handleDeleteMeetingRecording(req, env) {
 
 /* -------------------- MEETING RECORDINGS (USER-AGGREGATED, SEARCHABLE) -------------------- */
 
-/* -------------------- MEETING RECORDINGS (USER-AGGREGATED, SEARCHABLE) -------------------- */
-
 async function handleGetMeetingRecordings(req, env) {
   try {
     const url = new URL(req.url);
@@ -493,8 +491,15 @@ async function handleGetMeetingRecordings(req, env) {
               recording_count: m.recording_count,
               total_size: m.total_size,
               type: m.type,
+
+              // Zoom-provided auto-delete flags
               auto_delete: m.auto_delete,
               auto_delete_date: m.auto_delete_date,
+
+              // Friendly camelCase fields for frontend
+              autoDelete: m.auto_delete,
+              autoDeleteDate: m.auto_delete_date,
+
               recording_play_passcode: m.recording_play_passcode,
 
               // OWNER (from /users list)
@@ -675,8 +680,6 @@ async function handleDownloadRecording(req, env) {
 
   return new Response(zoomRes.body, { status: zoomRes.status, headers });
 }
-
-/* -------------------- DOWNLOAD PROXY (MEETING) -------------------- */
 
 /* -------------------- DOWNLOAD PROXY (MEETING) -------------------- */
 
