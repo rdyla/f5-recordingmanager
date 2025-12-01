@@ -43,15 +43,10 @@ const RecordingsTable: React.FC<RecordingsTableProps> = ({
               />
             </th>
             <th>Date / Time</th>
-            <th>Source</th>
             <th>Primary</th>
             <th>Owner / Host</th>
-            <th>Site</th>
             <th>Files</th>
             <th>Size</th>
-            <th>Type</th>
-
-            {/* NEW COLUMN */}
             <th>Auto-delete date</th>
           </tr>
         </thead>
@@ -78,7 +73,8 @@ const RecordingsTable: React.FC<RecordingsTableProps> = ({
                       }
                     />
                   </td>
-                  <td colSpan={9}>
+                  {/* 1 checkbox + 6 remaining columns = colSpan 6 */}
+                  <td colSpan={6}>
                     <button
                       type="button"
                       className="group-toggle"
@@ -134,8 +130,6 @@ const RecordingsTable: React.FC<RecordingsTableProps> = ({
                       ? `${rec.owner.name} (${rec.owner.extension_number})`
                       : rec.owner?.name || "—";
 
-                    const siteName = isMeeting ? "Meeting" : rec.site?.name || "—";
-                    const sourceLabel = isMeeting ? "Meeting" : "Phone";
                     const sizeDisplay = formatBytes(rec.file_size);
 
                     let filesDisplay: React.ReactNode = "—";
@@ -181,7 +175,11 @@ const RecordingsTable: React.FC<RecordingsTableProps> = ({
                           )}&filename=${encodeURIComponent(filename)}`;
 
                           fileLinks.push(
-                            <a key={t} href={href} className="text-sky-400 hover:underline">
+                            <a
+                              key={t}
+                              href={href}
+                              className="text-sky-400 hover:underline"
+                            >
                               {t}
                             </a>
                           );
@@ -212,7 +210,10 @@ const RecordingsTable: React.FC<RecordingsTableProps> = ({
                           rec.download_url
                         )}`;
                         filesDisplay = (
-                          <a href={href} className="text-sky-400 hover:underline">
+                          <a
+                            href={href}
+                            className="text-sky-400 hover:underline"
+                          >
                             Recording
                           </a>
                         );
@@ -229,16 +230,15 @@ const RecordingsTable: React.FC<RecordingsTableProps> = ({
                           />
                         </td>
                         <td>{dateDisplay}</td>
-                        <td>{sourceLabel}</td>
                         <td>{primary}</td>
                         <td>{ownerDisplay}</td>
-                        <td>{siteName}</td>
                         <td>{filesDisplay}</td>
                         <td>{sizeDisplay}</td>
-                        <td>{rec.recording_type || "—"}</td>
-
-                        {/* NEW: Auto-delete date cell */}
-                        <td>{isMeeting && rec.autoDeleteDate ? rec.autoDeleteDate : ""}</td>
+                        <td>
+                          {isMeeting && (rec as any).autoDeleteDate
+                            ? (rec as any).autoDeleteDate
+                            : ""}
+                        </td>
                       </tr>
                     );
                   })}
