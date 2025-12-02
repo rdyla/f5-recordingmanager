@@ -13,12 +13,13 @@ body {
 /* ---- App layout shell ---- */
 
 .app-page {
-  min-height: 100vh;
+  height: 100vh;               /* ← lock to viewport */
   background-color: #020617;
   color: #e5e7eb;
   display: flex;
   flex-direction: column;
 }
+
 
 .app-header {
   border-bottom: 1px solid #1f2937;
@@ -48,6 +49,7 @@ body {
   display: flex;
   flex-direction: column;
   min-height: 0; /* critical so children can scroll */
+  overflow: hidden;   /* ← keep scroll inside children */
 }
 
 .app-main-inner {
