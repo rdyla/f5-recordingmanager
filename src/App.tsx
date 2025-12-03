@@ -611,29 +611,29 @@ const App: React.FC = () => {
                 demoMode={demoMode}
               />
             )}
-          </section>
-        </div>
 
-        <div className="pager" style={{ marginTop: 12 }}>
-          <div className="pager-buttons">
-            <button
-              onClick={handlePrevPage}
-              disabled={safePageIndex <= 0 || deleting}
-              className="pager-btn"
-            >
-              Prev page
-            </button>
-            <button
-              onClick={handleNextPage}
-              disabled={safePageIndex + 1 >= totalPages || deleting}
-              className="pager-btn"
-            >
-              Next page
-            </button>
-          </div>
-          <div>
-            Page {totalPages ? safePageIndex + 1 : 0} / {totalPages}
-          </div>
+            <div className="pager" style={{ marginTop: 12 }}>
+                      <div className="pager-buttons">
+                        <button
+                          onClick={handlePrevPage}
+                          disabled={safePageIndex <= 0 || deleting}
+                          className="pager-btn"
+                        >
+                          Prev page
+                        </button>
+                        <button
+                          onClick={handleNextPage}
+                          disabled={safePageIndex + 1 >= totalPages || deleting}
+                          className="pager-btn"
+                        >
+                          Next page
+                        </button>
+                      </div>
+                      <div>
+                        Page {totalPages ? safePageIndex + 1 : 0} / {totalPages}
+                      </div>
+                    </div>
+          </section>
         </div>
 
         {/* Delete review modal */}
