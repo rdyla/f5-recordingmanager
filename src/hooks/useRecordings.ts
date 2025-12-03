@@ -16,6 +16,8 @@ const fetchJson = async <T,>(url: string) => {
   return (await res.json()) as T;
 };
 
+const MAX_PHONE_PAGES = 20; // safety cap in case of huge date ranges
+
 const useRecordings = (
   from: string,
   to: string,
@@ -24,50 +26,63 @@ const useRecordings = (
   demoMode: boolean
 ) => {
   const [data, setData] = useState<ApiResponse | null>(null);
-  const [nextToken, setNextToken] = useState<string | null>(null);
-  const [prevTokens, setPrevTokens] = useState<string[]>([]);
-  const [currentToken, setCurrentToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // we still respect pageSize for Zoom, but we’ll chain pages
   const zoomPageSize = Math.min(pageSize || 100, 300);
 
-  const fetchPhonePage = useCallback(
-    async (tokenOverride: string | null) => {
-      const params = new URLSearchParams();
-      params.set("from", from);
-      params.set("to", to);
-      params.set("page_size", String(zoomPageSize));
-      params.set("query_date_type", "start_time");
+  const fetchAllPhoneRecordings = useCallback(
+    async () => {
+      const allRecs: Recording[] = [];
+      let nextToken: string | null = null;
+      let loops = 0;
+      let apiFrom: string | undefined;
+      let apiTo: string | undefined;
 
-      if (tokenOverride && tokenOverride.length > 0) {
-        params.set("next_page_token", tokenOverride);
-      }
+      do {
+        const params = new URLSearchParams();
+        params.set("from", from);
+        params.set("to", to);
+        params.set("page_size", String(zoomPageSize));
+        params.set("query_date_type", "start_time");
+        if (nextToken) {
+          params.set("next_page_token", nextToken);
+        }
 
-      const api = await fetchJson<ApiResponse>(
-        `/api/phone/recordings?${params.toString()}`
-      );
+        const apiPage = await fetchJson<ApiResponse>(
+          `/api/phone/recordings?${params.toString()}`
+        );
 
-      const recs: Recording[] = (api.recordings ?? []).map((r) => ({
-        ...r,
-        source: "phone" as const,
-      }));
+        const recs: Recording[] = (apiPage.recordings ?? []).map((r) => ({
+          ...r,
+          source: "phone" as const,
+        }));
 
-      return { api, recs };
+        apiFrom = apiFrom ?? apiPage.from ?? from;
+        apiTo = apiPage.to ?? apiTo ?? to;
+
+        allRecs.push(...recs);
+        nextToken = apiPage.next_page_token ?? null;
+        loops += 1;
+      } while (nextToken && loops < MAX_PHONE_PAGES);
+
+      return {
+        from: apiFrom ?? from,
+        to: apiTo ?? to,
+        recordings: allRecs,
+      };
     },
     [from, to, zoomPageSize]
   );
 
-  const fetchMeetingPage = useCallback(
-    async (tokenOverride: string | null) => {
+  const fetchAllMeetingRecordings = useCallback(
+    async () => {
       const params = new URLSearchParams();
       params.set("from", from);
       params.set("to", to);
+      // page_size is mostly ignored by backend aggregation, but harmless
       params.set("page_size", String(zoomPageSize));
-
-      if (tokenOverride && tokenOverride.length > 0) {
-        params.set("next_page_token", tokenOverride);
-      }
 
       const api = await fetchJson<MeetingApiResponse>(
         `/api/meeting/recordings?${params.toString()}`
@@ -135,12 +150,6 @@ const useRecordings = (
           )
         );
 
-        // Pick up auto-delete flags; support both snake_case and camelCase from backend
-        const autoDelete: boolean | null =
-          mm.autoDelete ?? mm.auto_delete ?? null;
-        const autoDeleteDate: string | null =
-          mm.autoDeleteDate ?? mm.auto_delete_date ?? null;
-
         recs.push({
           id: m.uuid || String(m.id),
           caller_number: "",
@@ -171,25 +180,33 @@ const useRecordings = (
           recording_files: files,
           files_count: files.length,
           files_types: fileTypes,
-          autoDelete,
-          autoDeleteDate,
+          // auto-delete info (if your worker passes it through)
+          autoDelete: (mm as any).autoDelete ?? (mm as any).auto_delete,
+          autoDeleteDate:
+            (mm as any).autoDeleteDate ?? (mm as any).auto_delete_date,
+        } as Recording & {
+          autoDelete?: boolean | null;
+          autoDeleteDate?: string | null;
         });
       }
 
-      return { api, recs };
+      return {
+        from: api.from ?? from,
+        to: api.to ?? to,
+        recordings: recs,
+      };
     },
     [from, to, zoomPageSize]
   );
 
   const fetchRecordings = useCallback(
-    async (tokenOverride: string | null = null) => {
+    async () => {
       setLoading(true);
       setError(null);
 
       try {
         if (demoMode) {
           const recs = generateDemoRecordings(from, to);
-
           setData({
             from,
             to,
@@ -197,34 +214,31 @@ const useRecordings = (
             next_page_token: null,
             recordings: recs,
           });
-          setNextToken(null);
           return;
         }
 
         if (source === "phone") {
-          const { api, recs } = await fetchPhonePage(tokenOverride);
+          const { from: apiFrom, to: apiTo, recordings } =
+            await fetchAllPhoneRecordings();
 
           setData({
-            from: api.from ?? from,
-            to: api.to ?? to,
-            total_records: api.total_records ?? recs.length,
-            next_page_token: api.next_page_token ?? null,
-            recordings: recs,
+            from: apiFrom,
+            to: apiTo,
+            total_records: recordings.length,
+            next_page_token: null,
+            recordings,
           });
-
-          setNextToken(api.next_page_token ?? null);
         } else {
-          const { api, recs } = await fetchMeetingPage(tokenOverride);
+          const { from: apiFrom, to: apiTo, recordings } =
+            await fetchAllMeetingRecordings();
 
           setData({
-            from: api.from ?? from,
-            to: api.to ?? to,
-            total_records: recs.length,
-            next_page_token: api.next_page_token ?? null,
-            recordings: recs,
+            from: apiFrom,
+            to: apiTo,
+            total_records: recordings.length,
+            next_page_token: null,
+            recordings,
           });
-
-          setNextToken(api.next_page_token ?? null);
         }
       } catch (e: any) {
         console.error(e);
@@ -233,33 +247,15 @@ const useRecordings = (
         setLoading(false);
       }
     },
-    [demoMode, fetchMeetingPage, fetchPhonePage, from, source, to]
+    [demoMode, fetchAllMeetingRecordings, fetchAllPhoneRecordings, from, source, to]
   );
 
   const handleSearch = useCallback(() => {
-    setPrevTokens([]);
-    setCurrentToken(null);
-    fetchRecordings(null);
+    fetchRecordings();
   }, [fetchRecordings]);
 
-  const handleNext = useCallback(() => {
-    if (!nextToken) return;
-    setPrevTokens((prev) => [...prev, currentToken || ""]);
-    setCurrentToken(nextToken);
-    fetchRecordings(nextToken);
-  }, [currentToken, fetchRecordings, nextToken]);
-
-  const handlePrev = useCallback(() => {
-    if (!prevTokens.length) return;
-    const newPrev = [...prevTokens];
-    const last = newPrev.pop() || null;
-    setPrevTokens(newPrev);
-    setCurrentToken(last);
-    fetchRecordings(last);
-  }, [fetchRecordings, prevTokens]);
-
   useEffect(() => {
-    fetchRecordings(null);
+    fetchRecordings();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -269,16 +265,9 @@ const useRecordings = (
     loading,
     error,
     setError,
-    nextToken,
-    prevTokens,
-    currentToken,
-    handleSearch,
-    handleNext,
-    handlePrev,
     fetchRecordings,
+    handleSearch,
     setData,
-    setPrevTokens,
-    setCurrentToken,
   };
 };
 
