@@ -324,7 +324,7 @@ const App: React.FC = () => {
           `Delete complete: ${success} succeeded, ${failed} failed.`
         );
         clearSelection();
-        await fetchRecordings(); // no token arg in new hook
+        await fetchRecordings();
       }
     } finally {
       setDeleting(false);
@@ -333,15 +333,6 @@ const App: React.FC = () => {
       setTimeout(() => setDeleteProgress(null), 2000);
     }
   };
-
-  // helper for pill-style toggle buttons
-  const pillClass = (active: boolean) =>
-    [
-      "inline-flex items-center justify-center px-3 py-1.5 rounded-full text-xs font-medium border",
-      active
-        ? "bg-sky-500 text-slate-900 border-sky-500"
-        : "bg-slate-900 text-slate-200 border-slate-600 hover:bg-slate-800",
-    ].join(" ");
 
   return (
     <div className="app-page">
@@ -383,10 +374,13 @@ const App: React.FC = () => {
               {/* Source toggle */}
               <div className="filter-group">
                 <label className="filter-label">Source</label>
-                <div className="inline-flex rounded-full bg-slate-900 border border-slate-700 p-1">
+                <div className="toggle-pill-group">
                   <button
                     type="button"
-                    className={pillClass(source === "phone")}
+                    className={
+                      "toggle-pill" +
+                      (source === "phone" ? " toggle-pill-active" : "")
+                    }
                     onClick={() => {
                       setSource("phone");
                       setPageIndex(0);
@@ -398,7 +392,10 @@ const App: React.FC = () => {
                   </button>
                   <button
                     type="button"
-                    className={pillClass(source === "meetings")}
+                    className={
+                      "toggle-pill" +
+                      (source === "meetings" ? " toggle-pill-active" : "")
+                    }
                     onClick={() => {
                       setSource("meetings");
                       setPageIndex(0);
@@ -413,10 +410,13 @@ const App: React.FC = () => {
               {/* Auto-delete toggle (meetings only) */}
               <div className="filter-group">
                 <label className="filter-label">Auto-delete</label>
-                <div className="inline-flex rounded-full bg-slate-900 border border-slate-700 p-1">
+                <div className="toggle-pill-group">
                   <button
                     type="button"
-                    className={pillClass(autoDeleteFilter === "all")}
+                    className={
+                      "toggle-pill" +
+                      (autoDeleteFilter === "all" ? " toggle-pill-active" : "")
+                    }
                     onClick={() => setAutoDeleteFilter("all")}
                     disabled={source !== "meetings"}
                   >
@@ -424,7 +424,10 @@ const App: React.FC = () => {
                   </button>
                   <button
                     type="button"
-                    className={pillClass(autoDeleteFilter === "auto")}
+                    className={
+                      "toggle-pill" +
+                      (autoDeleteFilter === "auto" ? " toggle-pill-active" : "")
+                    }
                     onClick={() => setAutoDeleteFilter("auto")}
                     disabled={source !== "meetings"}
                   >
@@ -432,7 +435,12 @@ const App: React.FC = () => {
                   </button>
                   <button
                     type="button"
-                    className={pillClass(autoDeleteFilter === "manual")}
+                    className={
+                      "toggle-pill" +
+                      (autoDeleteFilter === "manual"
+                        ? " toggle-pill-active"
+                        : "")
+                    }
                     onClick={() => setAutoDeleteFilter("manual")}
                     disabled={source !== "meetings"}
                   >
@@ -444,12 +452,15 @@ const App: React.FC = () => {
               {/* Page size buttons */}
               <div className="filter-group">
                 <label className="filter-label">Page size</label>
-                <div className="inline-flex rounded-full bg-slate-900 border border-slate-700 p-1">
+                <div className="toggle-pill-group">
                   {[25, 100, 1000].map((size) => (
                     <button
                       key={size}
                       type="button"
-                      className={pillClass(pageSize === size)}
+                      className={
+                        "toggle-pill" +
+                        (pageSize === size ? " toggle-pill-active" : "")
+                      }
                       onClick={() => {
                         setPageSize(size);
                         setPageIndex(0);

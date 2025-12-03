@@ -395,6 +395,11 @@ input[type="date"].form-control {
   color: #0b1120;
 }
 
+.toggle-pill:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 /* Generic secondary button (matches pager-btn) */
 /* ---- Generic button style (for .btn and .pager-btn) ---- */
 
