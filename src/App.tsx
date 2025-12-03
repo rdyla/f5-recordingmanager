@@ -474,29 +474,31 @@ const App: React.FC = () => {
               {/* Search box */}
               <div className="filter-group flex-1">
                 <label className="filter-label">Search</label>
-                <input
-                  type="text"
-                  className="form-control"
-                  placeholder="Name, number, topic, host email, ..."
-                  value={query}
-                  onChange={(e) => {
-                    setPageIndex(0);
-                    setQuery(e.target.value);
-                  }}
-                />
+                <div className="search-inline">
+                  <input
+                    type="text"
+                    className="form-control search-input"
+                    placeholder="Name, number, topic, host email, ..."
+                    value={query}
+                    onChange={(e) => {
+                      setPageIndex(0);
+                      setQuery(e.target.value);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        onSearch();
+                      }
+                    }}
+                  />
+                  <button
+                    className="btn-primary"
+                    onClick={onSearch}
+                    disabled={loading}
+                  >
+                    Search
+                  </button>
+                </div>
               </div>
-
-              <div className="filter-group">
-                <label className="filter-label">&nbsp;</label>
-                <button
-                  className="btn-primary"
-                  onClick={onSearch}
-                  disabled={loading}
-                >
-                  Search
-                </button>
-              </div>
-            </div>
 
             {/* Status + paging (top) */}
             <div className="actions-row">
