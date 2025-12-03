@@ -499,6 +499,7 @@ const App: React.FC = () => {
                   </button>
                 </div>
               </div>
+            </div>
 
             {/* Status + paging (top) */}
             <div className="actions-row">
