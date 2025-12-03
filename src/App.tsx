@@ -50,7 +50,6 @@ const App: React.FC = () => {
     recordings,
     loading,
     error,
-    currentToken,
     handleSearch,
     fetchRecordings,
     setData,
@@ -297,7 +296,8 @@ const App: React.FC = () => {
         setDeleteMessage(
           `Delete complete: ${success} succeeded, ${failed} failed.`
         );
-        await fetchRecordings(currentToken);
+        // NEW: just refetch with the hook’s internal logic
+        await fetchRecordings();
         clearSelection();
       }
     } finally {
@@ -389,8 +389,8 @@ const App: React.FC = () => {
                   className="form-control"
                   value={pageSize}
                   onChange={(e) => {
-                    const val = Number(e.target.value) || 1;
-                    setPageSize(val);
+                    const n = Number(e.target.value) || 1;
+                    setPageSize(n);
                     setPageIndex(0);
                   }}
                 />
@@ -422,7 +422,7 @@ const App: React.FC = () => {
               </div>
             </div>
 
-            {/* Top status / summary */}
+            {/* Status row (no paging buttons here anymore) */}
             <div className="actions-row">
               <div className="status-group">
                 <span>
@@ -449,20 +449,20 @@ const App: React.FC = () => {
                   value={selectedCount}
                 />
                 <button
-                  className="btn"
+                  className="pager-btn"
                   onClick={() => setSelectedKeys(new Set())}
                 >
                   Clear
                 </button>
                 <button
-                  className="btn"
+                  className="pager-btn"
                   onClick={expandAllGroups}
                   disabled={deleting}
                 >
                   Expand all groups
                 </button>
                 <button
-                  className="btn"
+                  className="pager-btn"
                   onClick={collapseAllGroups}
                   disabled={deleting}
                 >
@@ -482,18 +482,19 @@ const App: React.FC = () => {
                   <span className="status-text">{deleteMessage}</span>
                 )}
                 {deleteProgress && (
-                  <div className="delete-progress">
-                    <div
-                      className="delete-progress-bar"
-                      style={{
-                        width: `${
-                          (deleteProgress.done / deleteProgress.total) * 100
-                        }%`,
-                      }}
-                    />
+                  <div className="delete-progress-wrapper">
+                    <div className="delete-progress-bar">
+                      <div
+                        className="delete-progress-bar-fill"
+                        style={{
+                          width: `${
+                            (deleteProgress.done / deleteProgress.total) * 100
+                          }%`,
+                        }}
+                      />
+                    </div>
                     <span className="delete-progress-text">
-                      Deleting {deleteProgress.done}/
-                      {deleteProgress.total}…
+                      Deleting {deleteProgress.done}/{deleteProgress.total}…
                     </span>
                   </div>
                 )}
@@ -523,7 +524,7 @@ const App: React.FC = () => {
               />
             )}
 
-            {/* Bottom pager – single source of truth for paging */}
+            {/* Bottom pager – the only place with paging buttons now */}
             <div className="pager">
               <div className="pager-buttons">
                 <button
@@ -548,8 +549,9 @@ const App: React.FC = () => {
                 </button>
               </div>
               <div>
-                Page {safePageIndex + 1} of {totalPages} · Showing{" "}
-                {pageRecords.length} of {totalFiltered} filtered
+                Page {safePageIndex + 1} / {totalPages} ·{" "}
+                {totalFiltered} matching recording
+                {totalFiltered !== 1 ? "s" : ""}
               </div>
             </div>
           </section>
