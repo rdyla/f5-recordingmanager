@@ -24,6 +24,8 @@ const useInitialDemoMode = (): boolean => {
   }
 };
 
+type AutoDeleteFilter = "all" | "auto" | "manual";
+
 const App: React.FC = () => {
   const [from, setFrom] = useState(todayStr);
   const [to, setTo] = useState(todayStr);
@@ -40,10 +42,12 @@ const App: React.FC = () => {
     useState<MeetingIdentity | null>(null);
   const [demoMode] = useState<boolean>(() => useInitialDemoMode());
 
-  // Auto-delete filter (meetings only)
-  const [autoDeleteFilter, setAutoDeleteFilter] = useState<
-    "all" | "auto" | "manual"
-  >("all");
+  const [autoDeleteFilter, setAutoDeleteFilter] =
+    useState<AutoDeleteFilter>("all");
+
+  // Review-before-delete modal state
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<Recording[]>([]);
 
   const {
     data,
@@ -101,7 +105,6 @@ const App: React.FC = () => {
       recordings
         .filter(matchesQuery)
         .filter((rec) => {
-          // Auto-delete filter applies only to meetings
           if (source !== "meetings") return true;
 
           if (autoDeleteFilter === "all") return true;
@@ -109,12 +112,8 @@ const App: React.FC = () => {
           const val: boolean | null | undefined =
             (rec as any).autoDelete ?? (rec as any).auto_delete;
 
-          if (autoDeleteFilter === "auto") {
-            return val === true;
-          }
-          if (autoDeleteFilter === "manual") {
-            return val === false;
-          }
+          if (autoDeleteFilter === "auto") return val === true;
+          if (autoDeleteFilter === "manual") return val === false;
 
           return true;
         }),
@@ -189,7 +188,6 @@ const App: React.FC = () => {
       try {
         const res = await fetch("/api/meeting/identity");
         if (!res.ok) return;
-
         const json = (await res.json()) as MeetingIdentity;
         setMeetingIdentity(json);
       } catch {
@@ -206,13 +204,32 @@ const App: React.FC = () => {
     handleSearch();
   };
 
-  const handleDeleteSelected = async () => {
-    if (!window.confirm(`Delete ${selectedCount} recordings?`)) return;
+  /* --------- DELETE FLOW WITH REVIEW MODAL --------- */
+
+  const openDeleteReview = () => {
+    if (selectedCount === 0) return;
 
     const toDelete = filteredRecordings.filter((rec, idx) =>
       selectedKeys.has(makeRecordKey(rec, idx))
     );
+    setPendingDelete(toDelete);
+    setShowDeleteModal(true);
+  };
 
+  const cancelDelete = () => {
+    setShowDeleteModal(false);
+    setPendingDelete([]);
+  };
+
+  const confirmDelete = async () => {
+    if (!pendingDelete.length) {
+      setShowDeleteModal(false);
+      return;
+    }
+
+    setShowDeleteModal(false);
+
+    const toDelete = pendingDelete.slice();
     setDeleting(true);
     setDeleteProgress({ total: toDelete.length, done: 0 });
 
@@ -228,7 +245,7 @@ const App: React.FC = () => {
             await new Promise((resolve) => setTimeout(resolve, 40));
             success += 1;
           } else {
-            if (source === "phone") {
+            if (rec.source === "phone") {
               if (!rec.id) {
                 throw new Error("Missing recording id for phone recording");
               }
@@ -296,15 +313,34 @@ const App: React.FC = () => {
         setDeleteMessage(
           `Delete complete: ${success} succeeded, ${failed} failed.`
         );
-        // NEW: just refetch with the hook’s internal logic
-        await fetchRecordings();
+        await fetchRecordings(); // your current hook version: no args
         clearSelection();
       }
     } finally {
       setDeleting(false);
       setTimeout(() => setDeleteProgress(null), 2000);
+      setPendingDelete([]);
     }
   };
+
+  /* --------- SMALL UI HELPERS --------- */
+
+  const setSourceToggle = (value: SourceFilter) => {
+    setSource(value);
+    setPageIndex(0);
+    clearSelection();
+    if (value !== "meetings") {
+      setAutoDeleteFilter("all");
+    }
+  };
+
+  const setPageSizePreset = (size: number) => {
+    setPageSize(size);
+    setPageIndex(0);
+  };
+
+  const isAutoFilterActive = (value: AutoDeleteFilter) =>
+    autoDeleteFilter === value;
 
   return (
     <div className="app-page">
@@ -321,7 +357,7 @@ const App: React.FC = () => {
       <main className="app-main">
         <div className="app-main-inner">
           <section className="app-card">
-            {/* Filters */}
+            {/* Filters + toggles */}
             <div className="filters-row">
               <div className="filter-group">
                 <label className="filter-label">From</label>
@@ -343,59 +379,99 @@ const App: React.FC = () => {
                 />
               </div>
 
-              <div className="filter-group">
+              {/* Source toggle */}
+              <div className="filter-group small">
                 <label className="filter-label">Source</label>
-                <select
-                  className="form-control"
-                  value={source}
-                  onChange={(e) => {
-                    const newSource = e.target.value as SourceFilter;
-                    setSource(newSource);
-                    setPageIndex(0);
-                    clearSelection();
-                    if (newSource !== "meetings") {
-                      setAutoDeleteFilter("all");
+                <div className="toggle-pill-group">
+                  <button
+                    type="button"
+                    className={
+                      "toggle-pill" +
+                      (source === "phone" ? " toggle-pill-active" : "")
                     }
-                  }}
-                >
-                  <option value="phone">Phone</option>
-                  <option value="meetings">Meetings</option>
-                </select>
+                    onClick={() => setSourceToggle("phone")}
+                  >
+                    Phone
+                  </button>
+                  <button
+                    type="button"
+                    className={
+                      "toggle-pill" +
+                      (source === "meetings" ? " toggle-pill-active" : "")
+                    }
+                    onClick={() => setSourceToggle("meetings")}
+                  >
+                    Meetings
+                  </button>
+                </div>
               </div>
 
+              {/* Auto-delete 3-way toggle (meetings only) */}
               {source === "meetings" && (
-                <div className="filter-group">
+                <div className="filter-group small">
                   <label className="filter-label">Auto-delete</label>
-                  <select
-                    className="form-control"
-                    value={autoDeleteFilter}
-                    onChange={(e) =>
-                      setAutoDeleteFilter(
-                        e.target.value as "all" | "auto" | "manual"
-                      )
-                    }
-                  >
-                    <option value="all">All</option>
-                    <option value="auto">Auto-delete ON</option>
-                    <option value="manual">Auto-delete OFF</option>
-                  </select>
+                  <div className="toggle-pill-group">
+                    <button
+                      type="button"
+                      className={
+                        "toggle-pill" +
+                        (isAutoFilterActive("all")
+                          ? " toggle-pill-active"
+                          : "")
+                      }
+                      onClick={() => setAutoDeleteFilter("all")}
+                    >
+                      All
+                    </button>
+                    <button
+                      type="button"
+                      className={
+                        "toggle-pill" +
+                        (isAutoFilterActive("auto")
+                          ? " toggle-pill-active"
+                          : "")
+                      }
+                      onClick={() => setAutoDeleteFilter("auto")}
+                    >
+                      On
+                    </button>
+                    <button
+                      type="button"
+                      className={
+                        "toggle-pill" +
+                        (isAutoFilterActive("manual")
+                          ? " toggle-pill-active"
+                          : "")
+                      }
+                      onClick={() => setAutoDeleteFilter("manual")}
+                    >
+                      Off
+                    </button>
+                  </div>
                 </div>
               )}
 
-              <div className="filter-group">
+              {/* Page size pills */}
+              <div className="filter-group small">
                 <label className="filter-label">Page size</label>
-                <input
-                  type="number"
-                  className="form-control"
-                  value={pageSize}
-                  onChange={(e) => {
-                    const n = Number(e.target.value) || 1;
-                    setPageSize(n);
-                    setPageIndex(0);
-                  }}
-                />
+                <div className="toggle-pill-group">
+                  {[25, 100, 1000].map((size) => (
+                    <button
+                      key={size}
+                      type="button"
+                      className={
+                        "toggle-pill" +
+                        (pageSize === size ? " toggle-pill-active" : "")
+                      }
+                      onClick={() => setPageSizePreset(size)}
+                    >
+                      {size}
+                    </button>
+                  ))}
+                </div>
               </div>
 
+              {/* Search box */}
               <div className="filter-group flex-1">
                 <label className="filter-label">Search</label>
                 <input
@@ -422,7 +498,7 @@ const App: React.FC = () => {
               </div>
             </div>
 
-            {/* Status row (no paging buttons here anymore) */}
+            {/* Status + paging (top) */}
             <div className="actions-row">
               <div className="status-group">
                 <span>
@@ -437,9 +513,32 @@ const App: React.FC = () => {
                 </span>
                 {error && <span className="error-text">Error: {error}</span>}
               </div>
+
+              <div className="button-group">
+                <button
+                  className="pager-btn"
+                  onClick={() =>
+                    setPageIndex((idx) => Math.max(0, idx - 1))
+                  }
+                  disabled={safePageIndex <= 0 || deleting}
+                >
+                  Prev page
+                </button>
+                <button
+                  className="pager-btn"
+                  onClick={() =>
+                    setPageIndex((idx) =>
+                      idx + 1 < totalPages ? idx + 1 : idx
+                    )
+                  }
+                  disabled={safePageIndex + 1 >= totalPages || deleting}
+                >
+                  Next page
+                </button>
+              </div>
             </div>
 
-            {/* Selection + delete bar */}
+            {/* Selection + delete */}
             <div className="actions-row">
               <div className="status-group">
                 <label className="filter-label">Selected</label>
@@ -449,20 +548,21 @@ const App: React.FC = () => {
                   value={selectedCount}
                 />
                 <button
-                  className="pager-btn"
+                  className="btn"
                   onClick={() => setSelectedKeys(new Set())}
+                  disabled={deleting}
                 >
                   Clear
                 </button>
                 <button
-                  className="pager-btn"
+                  className="btn"
                   onClick={expandAllGroups}
                   disabled={deleting}
                 >
                   Expand all groups
                 </button>
                 <button
-                  className="pager-btn"
+                  className="btn"
                   onClick={collapseAllGroups}
                   disabled={deleting}
                 >
@@ -473,10 +573,10 @@ const App: React.FC = () => {
               <div className="button-group">
                 <button
                   className="btn-primary"
-                  onClick={handleDeleteSelected}
+                  onClick={openDeleteReview}
                   disabled={selectedCount === 0 || deleting}
                 >
-                  Delete selected
+                  Review & delete…
                 </button>
                 {deleteMessage && (
                   <span className="status-text">{deleteMessage}</span>
@@ -524,7 +624,7 @@ const App: React.FC = () => {
               />
             )}
 
-            {/* Bottom pager – the only place with paging buttons now */}
+            {/* Pager (bottom) */}
             <div className="pager">
               <div className="pager-buttons">
                 <button
@@ -549,14 +649,67 @@ const App: React.FC = () => {
                 </button>
               </div>
               <div>
-                Page {safePageIndex + 1} / {totalPages} ·{" "}
-                {totalFiltered} matching recording
-                {totalFiltered !== 1 ? "s" : ""}
+                Page {safePageIndex + 1} / {totalPages}
               </div>
             </div>
           </section>
         </div>
       </main>
+
+      {/* DELETE REVIEW MODAL */}
+      {showDeleteModal && (
+        <div className="modal-backdrop">
+          <div className="modal-card">
+            <h2 className="modal-title">Review deletions</h2>
+            <p className="modal-subtitle">
+              You’re about to delete {pendingDelete.length} recording
+              {pendingDelete.length !== 1 ? "s" : ""}. This will move them
+              to the Zoom trash (or delete, depending on policy).
+            </p>
+
+            <div className="modal-body">
+              <div className="modal-list">
+                {pendingDelete.slice(0, 20).map((rec, idx) => (
+                  <div key={idx} className="modal-list-item">
+                    <div className="modal-list-primary">
+                      {rec.source === "meetings"
+                        ? rec.topic || "Meeting"
+                        : rec.caller_name || rec.caller_number || "Call"}
+                    </div>
+                    <div className="modal-list-meta">
+                      {rec.host_email || rec.owner?.name || ""}
+                    </div>
+                  </div>
+                ))}
+                {pendingDelete.length > 20 && (
+                  <div className="modal-list-more">
+                    + {pendingDelete.length - 20} more…
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="modal-footer">
+              <button
+                type="button"
+                className="btn"
+                onClick={cancelDelete}
+                disabled={deleting}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn-danger"
+                onClick={confirmDelete}
+                disabled={deleting}
+              >
+                Yes, delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
