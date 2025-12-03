@@ -452,7 +452,7 @@ const App: React.FC = () => {
 
               <div className="button-group">
                 <button
-                  className="btn"
+                  className="pager-btn"
                   onClick={() =>
                     setPageIndex((idx) => Math.max(0, idx - 1))
                   }
@@ -461,7 +461,7 @@ const App: React.FC = () => {
                   Prev page
                 </button>
                 <button
-                  className="btn"
+                  className="pager-btn"
                   onClick={() =>
                     setPageIndex((idx) =>
                       idx + 1 < totalPages ? idx + 1 : idx
@@ -472,14 +472,14 @@ const App: React.FC = () => {
                   Next page
                 </button>
                 <button
-                  className="btn"
+                  className="pager-btn"
                   onClick={onApiPrev}
                   disabled={!prevTokens.length || loading}
                 >
                   « API prev
                 </button>
                 <button
-                  className="btn"
+                  className="pager-btn"
                   onClick={onApiNext}
                   disabled={
                     !nextToken || !nextToken.length || loading
@@ -505,14 +505,14 @@ const App: React.FC = () => {
                   Clear
                 </button>
                 <button
-                  className="btn"
+                  className="pager-btn"
                   onClick={expandAllGroups}
                   disabled={deleting}
                 >
                   Expand all groups
                 </button>
                 <button
-                  className="btn"
+                  className="pager-btn"
                   onClick={collapseAllGroups}
                   disabled={deleting}
                 >
