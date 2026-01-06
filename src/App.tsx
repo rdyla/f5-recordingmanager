@@ -11,10 +11,12 @@ import useRecordings from "./hooks/useRecordings";
 import useSelection from "./hooks/useSelection";
 import type {
   DeleteProgress,
+  MeetingAnalyticsStats,
   MeetingIdentity,
   Recording,
   SourceFilter,
 } from "./types";
+
 import { safeString as S } from "./utils/recordingFormatters";
 
 const todayStr = new Date().toISOString().slice(0, 10);
@@ -43,6 +45,67 @@ const App: React.FC = () => {
   const [meetingIdentity, setMeetingIdentity] =
     useState<MeetingIdentity | null>(null);
   const [demoMode] = useState<boolean>(() => useInitialDemoMode());
+  // ---- Meeting analytics (plays/downloads/last access) ----
+type MeetingAnalyticsMap = Record<string, MeetingAnalyticsStats | undefined>;
+
+const [analyticsByMeetingId, setAnalyticsByMeetingId] =
+  useState<MeetingAnalyticsMap>({});
+
+// small concurrency limiter (no deps)
+const runLimited = useCallback(async <T,>(
+  items: T[],
+  limit: number,
+  worker: (item: T) => Promise<void>
+) => {
+  const concurrency = Math.max(1, Math.floor(limit || 1));
+  let idx = 0;
+
+  const runners = Array.from(
+    { length: Math.min(concurrency, items.length) },
+    async () => {
+      while (idx < items.length) {
+        const i = idx++;
+        await worker(items[i]);
+      }
+    }
+  );
+
+  await Promise.all(runners);
+}, []);
+
+const fetchMeetingAnalyticsSummary = useCallback(
+  async (
+    meetingId: string,
+    fromStr: string,
+    toStr: string
+  ): Promise<MeetingAnalyticsStats | null> => {
+    try {
+      const params = new URLSearchParams();
+      params.set("meetingId", meetingId);
+      params.set("from", fromStr);
+      params.set("to", toStr);
+
+      const res = await fetch(
+        `/api/meeting/recordings/analytics_summary?${params.toString()}`
+      );
+      if (!res.ok) return null;
+
+      const json = await res.json();
+
+      if (!json?.ok) return null;
+
+      return {
+        meetingId,
+        plays: Number(json.plays ?? 0),
+        downloads: Number(json.downloads ?? 0),
+        lastAccessDate: String(json.lastAccessDate ?? ""),
+      };
+    } catch {
+      return null;
+    }
+  },
+  []
+);
 
   // auto-delete filter (meetings only)
   const [autoDeleteFilter, setAutoDeleteFilter] = useState<
@@ -146,6 +209,66 @@ const App: React.FC = () => {
       })),
     [pageRecords, pageStart]
   );
+
+  useEffect(() => {
+  if (demoMode) return;
+  if (source !== "meetings") return;
+
+  const fromStr = data?.from ?? from;
+  const toStr = data?.to ?? to;
+
+  // meetingIds visible on the page
+  const meetingIds = Array.from(
+    new Set(
+      pageRecords
+        .map((r) => r.meetingId)
+        .filter((id): id is string => typeof id === "string" && id.length > 0)
+    )
+  );
+
+  if (!meetingIds.length) return;
+
+  let cancelled = false;
+
+  (async () => {
+    // only fetch what we don't already have
+    const missing = meetingIds.filter((id) => !analyticsByMeetingId[id]);
+    if (!missing.length) return;
+
+    await runLimited(missing, 6, async (id) => {
+      const stats = await fetchMeetingAnalyticsSummary(id, fromStr, toStr);
+
+      if (cancelled) return;
+
+      setAnalyticsByMeetingId((prev) => ({
+        ...prev,
+        [id]:
+          stats ??
+          ({
+            meetingId: id,
+            plays: 0,
+            downloads: 0,
+            lastAccessDate: "",
+          } as MeetingAnalyticsStats),
+      }));
+    });
+  })();
+
+  return () => {
+    cancelled = true;
+  };
+}, [
+  demoMode,
+  source,
+  from,
+  to,
+  data?.from,
+  data?.to,
+  pageRecords,
+  analyticsByMeetingId,
+  runLimited,
+  fetchMeetingAnalyticsSummary,
+]);
 
   const selectedCount = useMemo(
     () =>

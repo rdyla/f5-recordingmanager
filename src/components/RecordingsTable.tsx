@@ -23,7 +23,8 @@ export type RecordingsTableProps = {
   demoMode: boolean;
 
   /** NEW: meetingId -> analytics stats */
-  analyticsByMeetingId?: Record<string, MeetingAnalytics | undefined>;
+  analyticsByMeetingId: Record<string, import("../types").MeetingAnalyticsStats | undefined>;
+
 };
 
 const RecordingsTable: React.FC<RecordingsTableProps> = ({
@@ -62,7 +63,6 @@ const RecordingsTable: React.FC<RecordingsTableProps> = ({
             <th>Plays</th>
             <th>Downloads</th>
             <th>Last access</th>
-
             <th>Auto-delete date</th>
           </tr>
         </thead>
