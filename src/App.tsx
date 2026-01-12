@@ -954,7 +954,7 @@ const clearAllDlQueue = useCallback(() => {
               <div className="filter-group">
                 <label className="filter-label">Page size</label>
                 <div className="toggle-pill-group">
-                  {[25, 100, 1000].map((size) => (
+                  {[10, 25, 50, 100, 250, 500, 1000].map((size) => (
                     <button
                       key={size}
                       type="button"
