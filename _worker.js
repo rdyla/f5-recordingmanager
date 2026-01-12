@@ -954,6 +954,39 @@ async function handleDownloadMeetingRecording(req, env) {
   });
 }
 
+
+/* -------------------- handle proxy download for unified download model -------------------- */
+
+async function handleProxyDownload(req, env, kind) {
+  const u = new URL(req.url);
+  const url = u.searchParams.get("url");
+  const filename = u.searchParams.get("filename") || "download.bin";
+  if (!url) return new Response("Missing url", { status: 400 });
+
+  const accessToken = await getZoomAccessToken(env); // whatever you already use
+
+  const upstream = await fetch(url, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+
+  if (!upstream.ok) {
+    const txt = await upstream.text().catch(() => "");
+    return new Response(`Upstream ${upstream.status}: ${txt}`, { status: 502 });
+  }
+
+  return new Response(upstream.body, {
+    status: 200,
+    headers: {
+      "Content-Type": upstream.headers.get("content-type") || "application/octet-stream",
+      "Content-Disposition": `attachment; filename="${filename.replace(/"/g, "")}"`,
+      "Cache-Control": "no-store",
+    },
+  });
+}
+
 /* -------------------- JSON HELPER -------------------- */
 
 function json(status, obj) {
@@ -982,58 +1015,42 @@ export default {
     if (url.pathname === "/api/phone/recordings" && req.method === "GET") {
       return handleGetRecordings(req, env);
     }
-
-    // Phone download proxy
     if (url.pathname === "/api/phone/recordings/download" && req.method === "GET") {
-      return handleDownloadRecording(req, env);
+      return handleDownloadRecording(req, env); // or handleProxyDownload(req, env, "phone")
     }
-
-    // Delete a single phone recording
     if (url.pathname === "/api/phone/recordings/delete" && req.method === "POST") {
       return handleDeletePhoneRecording(req, env);
     }
 
-    // Meeting recording analytics summary
+    // Meetings
     if (url.pathname === "/api/meeting/recordings/analytics_summary" && req.method === "GET") {
       return handleGetMeetingRecordingAnalyticsSummary(req, env);
     }
-
-    // Meeting recordings (aggregated)
     if (url.pathname === "/api/meeting/recordings" && req.method === "GET") {
       return handleGetMeetingRecordings(req, env);
     }
-
-    // Contact Center recordings list
-
-    if (url.pathname === "/api/contact_center/recordings" && req.method === "GET") {
-        return handleGetContactCenterRecordings(req, env);
+    if (url.pathname === "/api/meeting/recordings/download" && req.method === "GET") {
+      return handleDownloadMeetingRecording(req, env); // or handleProxyDownload(req, env, "meetings")
     }
-
-    // CC recordings download proxy
-    if (url.pathname === "/api/contact_center/recordings/download" && req.method === "GET") {
-      return handleDownloadContactCenterRecording(req, env);
-    }
-
-    // Delete a single meeting recording file
     if (url.pathname === "/api/meeting/recordings/delete" && req.method === "POST") {
       return handleDeleteMeetingRecording(req, env);
     }
-
-    // Meeting identity
     if (url.pathname === "/api/meeting/identity" && req.method === "GET") {
       return handleGetMeetingIdentity(req, env);
     }
 
-    // Meeting recordings download proxy
-    if (url.pathname === "/api/meeting/recordings/download" && req.method === "GET") {
-      return handleDownloadMeetingRecording(req, env);
+    // Contact Center
+    if (url.pathname === "/api/contact_center/recordings" && req.method === "GET") {
+      return handleGetContactCenterRecordings(req, env);
+    }
+    if (url.pathname === "/api/contact_center/recordings/download" && req.method === "GET") {
+      return handleDownloadContactCenterRecording(req, env);
     }
 
-    // Asset serving (React UI)
-    if (env.ASSETS) {
-      return env.ASSETS.fetch(req);
-    }
+    // Assets
+    if (env.ASSETS) return env.ASSETS.fetch(req);
 
     return new Response("Recording Explorer backend", { status: 200 });
   },
 };
+

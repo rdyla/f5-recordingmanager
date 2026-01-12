@@ -86,18 +86,16 @@ export type Recording = {
 
 export type QueueStatus = "queued" | "downloading" | "done" | "failed";
 
-export type CCQueueItem = {
-  key: string;
-  recordingId: string;
-  kind: "recording" | "transcript";
-  url: string;
+export type DownloadQueueItem = {
+  key: string;                 // unique across everything
+  source: SourceFilter;        // "phone" | "meetings" | "cc"
+  kind: string;                // e.g. "recording", "transcript", "MP4", "M4A", ...
+  url: string;                 // Zoom download url (proxied through your worker)
   filename: string;
   status: QueueStatus;
+  attempts?: number;           // retry limiter
   error?: string;
-  attempts?: number;          // NEW
-  lastStatusCode?: number;    // NEW (optional but helpful)
 };
-// types.ts
 
 export type RecordingSource = "phone" | "meetings" | "cc";
 export type SourceFilter = "phone" | "meetings" | "cc";

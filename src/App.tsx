@@ -15,12 +15,10 @@ import type {
   MeetingIdentity,
   Recording,
   SourceFilter,
-  CCQueueItem,
+  DownloadQueueItem,
 } from "./types";
 
 import { safeString as S } from "./utils/recordingFormatters";
-
-const QUEUE_LS_KEY = "cc_download_queue_v1";
 
 const safeFilePart = (v: any, max = 40) =>
   String(v ?? "")
@@ -40,6 +38,7 @@ const datePart = (iso?: string) => {
 };
 
 const todayStr = new Date().toISOString().slice(0, 10);
+const QUEUE_LS_KEY = "download_queue_v2";
 
 const useInitialDemoMode = (): boolean => {
   if (typeof window === "undefined") return false;
@@ -54,41 +53,6 @@ const useInitialDemoMode = (): boolean => {
 const App: React.FC = () => {
   const [from, setFrom] = useState(todayStr);
   const [to, setTo] = useState(todayStr);
-    // ---------------- CC DOWNLOAD QUEUE ----------------
-  const [ccQueue, setCcQueue] = useState<CCQueueItem[]>([]);
-  const [ccQueueOpen, setCcQueueOpen] = useState(false);
-  const [ccQueueRunning, setCcQueueRunning] = useState(false);
-
-
-  const ccQueueRef = React.useRef<CCQueueItem[]>([]);
-  useEffect(() => {
-  ccQueueRef.current = ccQueue;
-}, [ccQueue]);
-
-  const ccQueueRunningRef = React.useRef(false);
-  useEffect(() => {
-    ccQueueRunningRef.current = ccQueueRunning;
-  }, [ccQueueRunning]);
-
-  // load queue from localStorage (once)
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem(QUEUE_LS_KEY);
-      if (raw) setCcQueue(JSON.parse(raw));
-    } catch {
-      // ignore
-    }
-  }, []);
-
-  // persist queue
-  useEffect(() => {
-    try {
-      localStorage.setItem(QUEUE_LS_KEY, JSON.stringify(ccQueue));
-    } catch {
-      // ignore
-    }
-  }, [ccQueue]);
-
   const [pageSize, setPageSize] = useState<number>(100);
   const [source, setSource] = useState<SourceFilter>("phone");
   const [query, setQuery] = useState<string>("");
@@ -105,6 +69,41 @@ type MeetingAnalyticsMap = Record<string, MeetingAnalyticsStats | undefined>;
 
 const [analyticsByMeetingId, setAnalyticsByMeetingId] =
   useState<MeetingAnalyticsMap>({});
+
+
+  // ---------------- DOWNLOAD QUEUE (unified) ----------------
+const [dlQueue, setDlQueue] = useState<DownloadQueueItem[]>([]);
+const [dlQueueOpen, setDlQueueOpen] = useState(false);
+const [dlQueueRunning, setDlQueueRunning] = useState(false);
+
+const dlQueueRef = React.useRef<DownloadQueueItem[]>([]);
+useEffect(() => {
+  dlQueueRef.current = dlQueue;
+}, [dlQueue]);
+
+const dlQueueRunningRef = React.useRef(false);
+useEffect(() => {
+  dlQueueRunningRef.current = dlQueueRunning;
+}, [dlQueueRunning]);
+
+// load queue from localStorage (once)
+useEffect(() => {
+  try {
+    const raw = localStorage.getItem(QUEUE_LS_KEY);
+    if (raw) setDlQueue(JSON.parse(raw));
+  } catch {
+    // ignore
+  }
+}, []);
+
+// persist queue
+useEffect(() => {
+  try {
+    localStorage.setItem(QUEUE_LS_KEY, JSON.stringify(dlQueue));
+  } catch {
+    // ignore
+  }
+}, [dlQueue]);
 
 // small concurrency limiter (no deps)
 const runLimited = useCallback(async <T,>(
@@ -246,7 +245,6 @@ const fetchMeetingAnalyticsSummary = useCallback(
     [matchesQuery, recordings, source, autoDeleteFilter]
   );
 
-  const activeItem = useMemo( () => ccQueue.find((x) => x.status === "downloading") || null, [ccQueue] );
   const effectivePageSize = pageSize || 100;
   const totalFiltered = filteredRecordings.length;
   const totalPages = totalFiltered
@@ -397,6 +395,9 @@ const fetchMeetingAnalyticsSummary = useCallback(
     setPageIndex((idx) => (idx + 1 < totalPages ? idx + 1 : idx));
   };
 
+
+
+    // ---------------------- CC download queue items (old) ----------------------
     const buildCcQueueItemsFromSelection = useCallback((): CCQueueItem[] => {
     if (source !== "cc") return [];
 
@@ -444,155 +445,314 @@ const fetchMeetingAnalyticsSummary = useCallback(
     return items;
   }, [filteredRecordings, makeRecordKey, selectedKeys, source]);
 
-  const addSelectedCcToQueue = useCallback(() => {
-    const newItems = buildCcQueueItemsFromSelection();
-    if (!newItems.length) return;
+ // -------------------- Download queue builders (unified) --------------------
 
-    setCcQueue((prev) => {
-      const existing = new Set(prev.map((x) => x.key));
-      const merged = [...prev];
-      for (const it of newItems) {
-        if (!existing.has(it.key)) merged.push(it);
-      }
-      return merged;
+const buildCcQueueItemsFromSelection = useCallback((): DownloadQueueItem[] => {
+  if (source !== "cc") return [];
+
+  const selected = filteredRecordings.filter((rec, idx) =>
+    selectedKeys.has(makeRecordKey(rec, idx))
+  );
+
+  const items: DownloadQueueItem[] = [];
+
+  for (const rec of selected) {
+    const rid = (rec.cc_recording_id || rec.id || "").trim();
+    if (!rid) continue;
+
+    const startIso = rec.date_time || rec.end_time || "";
+    const d = datePart(startIso);
+
+    const agent = safeFilePart(
+      rec.cc_agent_name || rec.callee_name || rec.owner?.name || "agent"
+    );
+    const caller = safeFilePart(
+      rec.cc_consumer_name || rec.caller_name || "caller"
+    );
+
+    if (rec.cc_download_url) {
+      items.push({
+        key: `cc|${rid}|recording`,
+        source: "cc",
+        kind: "recording",
+        url: rec.cc_download_url,
+        filename: `CC_${d}_${agent}_${caller}_${safeFilePart(rid, 24)}.mp4`,
+        status: "queued",
+        attempts: 0,
+      });
+    }
+
+    if (rec.cc_transcript_url) {
+      items.push({
+        key: `cc|${rid}|transcript`,
+        source: "cc",
+        kind: "transcript",
+        url: rec.cc_transcript_url,
+        filename: `CC_${d}_${agent}_${caller}_${safeFilePart(rid, 24)}.vtt`,
+        status: "queued",
+        attempts: 0,
+      });
+    }
+  }
+
+  return items;
+}, [source, filteredRecordings, selectedKeys, makeRecordKey]);
+
+const buildPhoneQueueItemsFromSelection = useCallback((): DownloadQueueItem[] => {
+  if (source !== "phone") return [];
+
+  const selected = filteredRecordings.filter((rec, idx) =>
+    selectedKeys.has(makeRecordKey(rec, idx))
+  );
+
+  const items: DownloadQueueItem[] = [];
+
+  for (const rec of selected) {
+    const url = rec.download_url;
+    if (!url) continue;
+
+    const d = datePart(rec.date_time);
+    const caller = safeFilePart(rec.caller_name || rec.caller_number || "caller");
+    const callee = safeFilePart(rec.callee_name || rec.callee_number || "callee");
+    const rid = safeFilePart(rec.id, 24);
+
+    items.push({
+      key: `phone|${rec.id}|recording`,
+      source: "phone",
+      kind: "recording",
+      url,
+      filename: `PHONE_${d}_${caller}_${callee}_${rid}.mp3`,
+      status: "queued",
+      attempts: 0,
     });
+  }
 
-    setCcQueueOpen(true);
-  }, [buildCcQueueItemsFromSelection]);
+  return items;
+}, [source, filteredRecordings, selectedKeys, makeRecordKey]);
 
-  const ccCounts = useMemo(() => {
-    const total = ccQueue.length;
-    const done = ccQueue.filter((x) => x.status === "done").length;
-    const failed = ccQueue.filter((x) => x.status === "failed").length;
-    const downloading = ccQueue.filter((x) => x.status === "downloading").length;
-    const queued = ccQueue.filter((x) => x.status === "queued").length;
-    return { total, done, failed, downloading, queued };
-  }, [ccQueue]);
+const buildMeetingsQueueItemsFromSelection = useCallback((): DownloadQueueItem[] => {
+  if (source !== "meetings") return [];
 
-    const downloadQueueItem = useCallback(async (item: CCQueueItem) => {
-      const href =
-        `/api/contact_center/recordings/download?url=${encodeURIComponent(item.url)}` +
-        `&filename=${encodeURIComponent(item.filename)}`;
+  const selected = filteredRecordings.filter((rec, idx) =>
+    selectedKeys.has(makeRecordKey(rec, idx))
+  );
 
-      const res = await fetch(href);
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        const err: any = new Error(
-          `HTTP ${res.status}${text ? `: ${text.slice(0, 120)}` : ""}`
+  const items: DownloadQueueItem[] = [];
+
+  for (const rec of selected) {
+    const files = rec.recording_files || [];
+    if (!files.length) continue;
+
+    const d = datePart(rec.date_time);
+    const host = safeFilePart(
+      rec.host_email || rec.host_name || rec.owner?.name || "host"
+    );
+    const topic = safeFilePart(rec.topic || "meeting", 50);
+    const mid = safeFilePart(rec.meetingId || rec.id, 24);
+
+    for (const f of files) {
+      const url = f.download_url;
+      if (!url) continue;
+
+      const kind = String(f.file_type || f.recording_type || "FILE").toUpperCase();
+      const ext = String(f.file_extension || kind || "dat").toLowerCase();
+
+      items.push({
+        key: `mtg|${rec.meetingId || rec.id}|${f.id || safeFilePart(url, 20)}|${kind}`,
+        source: "meetings",
+        kind,
+        url,
+        filename: `MTG_${d}_${host}_${topic}_${mid}_${kind}.${ext}`,
+        status: "queued",
+        attempts: 0,
+      });
+    }
+  }
+
+  return items;
+}, [source, filteredRecordings, selectedKeys, makeRecordKey]);
+
+const buildQueueItemsFromSelection = useCallback((): DownloadQueueItem[] => {
+  if (source === "cc") return buildCcQueueItemsFromSelection();
+  if (source === "phone") return buildPhoneQueueItemsFromSelection();
+  if (source === "meetings") return buildMeetingsQueueItemsFromSelection();
+  return [];
+}, [
+  source,
+  buildCcQueueItemsFromSelection,
+  buildPhoneQueueItemsFromSelection,
+  buildMeetingsQueueItemsFromSelection,
+]);
+
+const addSelectedToQueue = useCallback(() => {
+  const newItems = buildQueueItemsFromSelection();
+  if (!newItems.length) return;
+
+  setDlQueue((prev) => {
+    const existing = new Set(prev.map((x) => x.key));
+    const merged = [...prev];
+    for (const it of newItems) {
+      if (!existing.has(it.key)) merged.push(it);
+    }
+    return merged;
+  });
+
+  setDlQueueOpen(true);
+}, [buildQueueItemsFromSelection]);
+
+// -------------------- Queue counts + active item --------------------
+
+const dlCounts = useMemo(() => {
+  const total = dlQueue.length;
+  const done = dlQueue.filter((x) => x.status === "done").length;
+  const failed = dlQueue.filter((x) => x.status === "failed").length;
+  const downloading = dlQueue.filter((x) => x.status === "downloading").length;
+  const queued = dlQueue.filter((x) => x.status === "queued").length;
+  return { total, done, failed, downloading, queued };
+}, [dlQueue]);
+
+const activeDownload = useMemo(
+  () => dlQueue.find((x) => x.status === "downloading") || null,
+  [dlQueue]
+);
+
+// -------------------- Download action + runner --------------------
+
+const downloadQueueItem = useCallback(async (item: DownloadQueueItem) => {
+  const base =
+    item.source === "cc"
+      ? "/api/contact_center/recordings/download"
+      : item.source === "phone"
+      ? "/api/phone/recordings/download"
+      : "/api/meeting/recordings/download";
+
+  const href =
+    `${base}?url=${encodeURIComponent(item.url)}` +
+    `&filename=${encodeURIComponent(item.filename)}`;
+
+  const res = await fetch(href);
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    const err: any = new Error(
+      `HTTP ${res.status}${text ? `: ${text.slice(0, 160)}` : ""}`
+    );
+    err.status = res.status;
+    throw err;
+  }
+
+  const blob = await res.blob();
+  const blobUrl = URL.createObjectURL(blob);
+
+  const a = document.createElement("a");
+  a.href = blobUrl;
+  a.download = item.filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+
+  URL.revokeObjectURL(blobUrl);
+}, []);
+
+const runDlQueue = useCallback(async () => {
+  if (demoMode) return;
+  if (dlQueueRunningRef.current) return;
+
+  const MAX_ATTEMPTS = 3;
+  const isFatalStatus = (code?: number) => code === 404 || code === 401 || code === 403;
+
+  dlQueueRunningRef.current = true;
+  setDlQueueRunning(true);
+
+  try {
+    while (dlQueueRunningRef.current) {
+      const next = dlQueueRef.current.find(
+        (x) =>
+          (x.status === "queued" || x.status === "failed") &&
+          (x.attempts ?? 0) < MAX_ATTEMPTS
+      );
+
+      if (!next) break;
+
+      setDlQueue((prev) =>
+        prev.map((x) =>
+          x.key === next.key
+            ? { ...x, status: "downloading", error: undefined }
+            : x
+        )
+      );
+
+      try {
+        await downloadQueueItem(next);
+
+        setDlQueue((prev) =>
+          prev.map((x) => (x.key === next.key ? { ...x, status: "done" } : x))
         );
-        err.status = res.status;
-        throw err;
-      }
+      } catch (e: any) {
+        const code = Number(e?.status || 0) || undefined;
+        const msg = e?.message || String(e);
 
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
+        setDlQueue((prev) =>
+          prev.map((x) => {
+            if (x.key !== next.key) return x;
 
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = item.filename;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
+            const attempts = (x.attempts ?? 0) + 1;
+            const fatal = isFatalStatus(code);
+            const maxed = attempts >= MAX_ATTEMPTS;
 
-      URL.revokeObjectURL(blobUrl);
-    }, []);
+            return {
+              ...x,
+              attempts,
+              status: "failed",
+              error:
+                (fatal
+                  ? `Fatal (${code})`
+                  : maxed
+                  ? "Max retries reached"
+                  : "Failed") + `: ${msg}`,
+            };
+          })
+        );
 
-
-
-        const runCcQueue = useCallback(async () => {
-        if (demoMode) return;
-        if (ccQueueRunningRef.current) return;
-
-
-        const MAX_ATTEMPTS = 3;
-        const isFatalStatus = (code?: number) =>
-          code === 404 || code === 401 || code === 403;
-
-        // IMPORTANT: set ref immediately so the while loop can run
-        ccQueueRunningRef.current = true;
-        setCcQueueRunning(true);
-
-        try {
-          while (ccQueueRunningRef.current) {
-            const next = ccQueueRef.current.find(
-              (x) => x.status === "queued" 
-            );
-
-            if (!next) break;
-
-           setCcQueue((prev) =>
+        // If fatal, force it to max so it won't be picked again
+        if (isFatalStatus(code)) {
+          setDlQueue((prev) =>
             prev.map((x) =>
-              x.key === next.key
-                ? { ...x, status: "downloading", error: undefined }
-                : x
+              x.key === next.key ? { ...x, attempts: MAX_ATTEMPTS } : x
             )
           );
-
-          try {
-            await downloadQueueItem(next);
-            setCcQueue((prev) =>
-              prev.map((x) =>
-                x.key === next.key
-                  ? { ...x, status: "done", lastStatusCode: undefined }
-                  : x
-              )
-            );
-          } catch (e: any) {
-            const code = Number(e?.status || 0) || undefined;
-
-            setCcQueue((prev) =>
-              prev.map((x) => {
-                if (x.key !== next.key) return x;
-
-                const attempts = (x.attempts ?? 0) + 1;
-                const fatal = isFatalStatus(code);
-                const maxed = attempts >= MAX_ATTEMPTS;
-
-                return {
-                  ...x,
-                  attempts,
-                  lastStatusCode: code,
-                  status: "failed", // IMPORTANT: stay failed; don’t re-queue automatically
-                  error:
-                    (fatal
-                      ? `Fatal (${code})`
-                      : maxed
-                        ? `Max retries reached`
-                        : `Failed`) + `: ${e?.message || String(e)}`,
-                };
-              })
-            );
-          }
-
-            await new Promise((r) => setTimeout(r, 250));
-          }
-        } finally {
-          ccQueueRunningRef.current = false;
-          setCcQueueRunning(false);
         }
-      }, [demoMode, downloadQueueItem]);
+      }
 
+      await new Promise((r) => setTimeout(r, 250));
+    }
+  } finally {
+    dlQueueRunningRef.current = false;
+    setDlQueueRunning(false);
+  }
+}, [demoMode, downloadQueueItem]);
 
-      const pauseCcQueue = useCallback(() => {
-        ccQueueRunningRef.current = false;
-        setCcQueueRunning(false);
-      }, []);
+const pauseDlQueue = useCallback(() => {
+  dlQueueRunningRef.current = false;
+  setDlQueueRunning(false);
+}, []);
 
-      const retryFailedCcQueue = useCallback(() => {
-        setCcQueue((prev) =>
-          prev.map((x) => (x.status === "failed" ? { ...x, status: "queued", error: undefined } : x))
-        );
-      }, []);
+const retryFailedDlQueue = useCallback(() => {
+  setDlQueue((prev) =>
+    prev.map((x) =>
+      x.status === "failed" ? { ...x, status: "queued", error: undefined } : x
+    )
+  );
+}, []);
 
-      const clearDoneCcQueue = useCallback(() => {
-        setCcQueue((prev) => prev.filter((x) => x.status !== "done"));
-      }, []);
+const clearDoneDlQueue = useCallback(() => {
+  setDlQueue((prev) => prev.filter((x) => x.status !== "done"));
+}, []);
 
-      const clearAllCcQueue = useCallback(() => {
-        ccQueueRunningRef.current = false;
-        setCcQueue([]);
-        setCcQueueRunning(false);
-      }, []);
+const clearAllDlQueue = useCallback(() => {
+  dlQueueRunningRef.current = false;
+  setDlQueue([]);
+  setDlQueueRunning(false);
+}, []);
 
   // open the modal with current selection
   const openDeleteModal = () => {
@@ -895,26 +1055,25 @@ const fetchMeetingAnalyticsSummary = useCallback(
                 className="flex gap-3 items-end"
                 style={{ alignSelf: "stretch", justifyContent: "flex-end" }}
               >
-                {source === "cc" ? (
-                  <>
-                    <button
-                      className="btn-primary"
-                      onClick={addSelectedCcToQueue}
-                      disabled={selectedCount === 0 || demoMode}
-                      title={demoMode ? "Queue disabled in demo mode" : "Add selected CC items to download queue"}
-                    >
-                      Add to download queue
-                    </button>
-                    <button
-                      className="pager-btn"
-                      onClick={() => setCcQueueOpen((v) => !v)}
-                      disabled={ccCounts.total === 0}
-                      title="Open download queue"
-                    >
-                      Queue ({ccCounts.done}/{ccCounts.total})
-                    </button>
-                  </>
-                ) : (
+                <div className="flex gap-3 items-end" style={{ alignSelf: "stretch", justifyContent: "flex-end" }}>
+                  <button
+                    className="btn-primary"
+                    onClick={addSelectedToQueue}
+                    disabled={selectedCount === 0 || demoMode}
+                    title={demoMode ? "Queue disabled in demo mode" : "Add selected items to download queue"}
+                  >
+                    Add to download queue
+                  </button>
+
+                  <button
+                    className="pager-btn"
+                    onClick={() => setDlQueueOpen((v) => !v)}
+                    disabled={dlCounts.total === 0}
+                    title="Open download queue"
+                  >
+                    Queue ({dlCounts.done}/{dlCounts.total})
+                  </button>
+
                   <button
                     className="btn-primary"
                     onClick={openDeleteModal}
@@ -922,7 +1081,7 @@ const fetchMeetingAnalyticsSummary = useCallback(
                   >
                     Review &amp; delete…
                   </button>
-                )}
+                </div>
               </div>
             </div>
 
@@ -1023,108 +1182,105 @@ const fetchMeetingAnalyticsSummary = useCallback(
                 />
             )}
 
-            {/* Contact Center download queue drawer */}
-{source === "cc" && ccQueueOpen && (
-  <div
-    className="app-card"
-    style={{
-      position: "fixed",
-      left: 16,
-      right: 16,
-      bottom: 16,
-      zIndex: 50,
-      maxHeight: "45vh",
-      overflow: "hidden",
-      boxShadow: "0 10px 30px rgba(0,0,0,0.35)",
-    }}
-  >
-    <div className="actions-row" style={{ display: "flex", justifyContent: "space-between" }}>
-      {/* header + controls */}
-                    <div className="status-group">
-                      <strong>Download queue</strong>{" "}
-                      <span style={{ opacity: 0.8 }}>
-                        · {ccCounts.done}/{ccCounts.total} done · {ccCounts.failed} failed · {ccCounts.queued} queued
-                      </span>
-                    </div>
+            {/* download queue drawer */}
+            {dlQueueOpen && (
+              <div
+                className="app-card"
+                style={{
+                  position: "fixed",
+                  left: 16,
+                  right: 16,
+                  bottom: 16,
+                  zIndex: 50,
+                  maxHeight: "45vh",
+                  overflow: "hidden",
+                  boxShadow: "0 10px 30px rgba(0,0,0,0.35)",
+                }}
+              >
+                <div className="actions-row" style={{ display: "flex", justifyContent: "space-between" }}>
+                  <div className="status-group">
+                    <strong>Download queue</strong>{" "}
+                    <span style={{ opacity: 0.8 }}>
+                      · {dlCounts.done}/{dlCounts.total} done · {dlCounts.failed} failed · {dlCounts.queued} queued
+                    </span>
+                  </div>
 
-                    <div className="status-group flex items-center gap-2">
-                      {!ccQueueRunning ? (
-                      <button
-                        className="btn-primary"
-                        onClick={runCcQueue}
-                        disabled={demoMode || ccCounts.total === 0}
-                      >
+                  <div className="status-group flex items-center gap-2">
+                    {!dlQueueRunning ? (
+                      <button className="btn-primary" onClick={runDlQueue} disabled={demoMode || dlCounts.total === 0}>
                         Start
                       </button>
-                      ) : (
-                        <button className="pager-btn" onClick={pauseCcQueue}>
-                          Pause
-                        </button>
-                      )}
-
-                      <button className="pager-btn" onClick={retryFailedCcQueue} disabled={ccCounts.failed === 0}>
-                        Retry failed
+                    ) : (
+                      <button className="pager-btn" onClick={pauseDlQueue}>
+                        Pause
                       </button>
-                      <button className="pager-btn" onClick={clearDoneCcQueue} disabled={ccCounts.done === 0}>
-                        Clear done
-                      </button>
-                      <button className="pager-btn" onClick={clearAllCcQueue} disabled={ccCounts.total === 0}>
-                        Clear all
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="table-wrapper" style={{ marginTop: 10, maxHeight: 260, overflow: "auto" }}>
-                    {activeItem && (
-                      <div style={{ marginBottom: 8, opacity: 0.9, fontSize: 13 }}>
-                        Downloading:{" "}
-                        <span style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}>
-                          {activeItem.filename}
-                        </span>
-                      </div>
                     )}
 
-                    <table className="rec-table" style={{ margin: 0 }}>
-                      <thead>
-                        <tr>
-                          <th>Status</th>
-                          <th>Type</th>
-                          <th>Filename</th>
-                          <th>Error</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {ccQueue.slice(0, 250).map((it) => (
-                          <tr key={it.key} className="rec-row">
-                            <td>
-                              {it.status === "queued" && "Queued"}
-                              {it.status === "downloading" && "Downloading…"}
-                              {it.status === "done" && "Done"}
-                              {it.status === "failed" && "Failed"}
-                            </td>
-                            <td>{it.kind}</td>
-                            <td style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}>
-                              {it.filename}
-                            </td>
-                            <td style={{ maxWidth: 420, opacity: 0.85 }}>
-                              {it.status === "failed" ? it.error || "Error" : ""}
-                            </td>
-                          </tr>
-                        ))}
-
-                        {ccQueue.length > 250 && (
-                          <tr className="rec-row">
-                            <td colSpan={4} style={{ opacity: 0.8 }}>
-                              Showing first 250 queue items (of {ccQueue.length}). Queue will still run all items.
-                            </td>
-                          </tr>
-                        )}
-                      </tbody>
-                    </table>
+                    <button className="pager-btn" onClick={retryFailedDlQueue} disabled={dlCounts.failed === 0}>
+                      Retry failed
+                    </button>
+                    <button className="pager-btn" onClick={clearDoneDlQueue} disabled={dlCounts.done === 0}>
+                      Clear done
+                    </button>
+                    <button className="pager-btn" onClick={clearAllDlQueue} disabled={dlCounts.total === 0}>
+                      Clear all
+                    </button>
                   </div>
-
                 </div>
-              )}
+
+                <div className="table-wrapper" style={{ marginTop: 10, maxHeight: 260, overflow: "auto" }}>
+                  {activeDownload && (
+                    <div style={{ marginBottom: 8, opacity: 0.9, fontSize: 13 }}>
+                      Downloading:{" "}
+                      <span style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}>
+                        {activeDownload.filename}
+                      </span>
+                    </div>
+                  )}
+
+                  <table className="rec-table" style={{ margin: 0 }}>
+                    <thead>
+                      <tr>
+                        <th>Status</th>
+                        <th>Source</th>
+                        <th>Type</th>
+                        <th>Filename</th>
+                        <th>Error</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {dlQueue.slice(0, 250).map((it) => (
+                        <tr key={it.key} className="rec-row">
+                          <td>
+                            {it.status === "queued" && "Queued"}
+                            {it.status === "downloading" && "Downloading…"}
+                            {it.status === "done" && "Done"}
+                            {it.status === "failed" && "Failed"}
+                          </td>
+                          <td>{it.source}</td>
+                          <td>{it.kind}</td>
+                          <td style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}>
+                            {it.filename}
+                          </td>
+                          <td style={{ maxWidth: 420, opacity: 0.85 }}>
+                            {it.status === "failed" ? it.error || "Error" : ""}
+                          </td>
+                        </tr>
+                      ))}
+
+                      {dlQueue.length > 250 && (
+                        <tr className="rec-row">
+                          <td colSpan={5} style={{ opacity: 0.8 }}>
+                            Showing first 250 queue items (of {dlQueue.length}). Queue will still run all items.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
 
             {/* Bottom pager */}
             <div className="pager" style={{ marginTop: 12 }}>
