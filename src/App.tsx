@@ -1007,21 +1007,21 @@ const clearAllDlQueue = useCallback(() => {
               >
                 <div className="flex gap-3 items-end" style={{ alignSelf: "stretch", justifyContent: "flex-end" }}>
                   <button
-                    className="btn-primary"
-                    onClick={addSelectedToQueue}
-                    disabled={selectedCount === 0 || demoMode}
-                    title={demoMode ? "Queue disabled in demo mode" : "Add selected items to download queue"}
-                  >
-                    Add to download queue
-                  </button>
-
-                  <button
                     className="pager-btn"
                     onClick={() => setDlQueueOpen((v) => !v)}
                     disabled={dlCounts.total === 0}
                     title="Open download queue"
                   >
                     Queue ({dlCounts.done}/{dlCounts.total})
+                  </button>
+
+                  <button
+                    className="btn-primary"
+                    onClick={addSelectedToQueue}
+                    disabled={selectedCount === 0 || demoMode}
+                    title={demoMode ? "Queue disabled in demo mode" : "Add selected items to download queue"}
+                  >
+                    Add to download queue
                   </button>
 
                   <button
