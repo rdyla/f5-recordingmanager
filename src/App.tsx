@@ -15,7 +15,6 @@ import type {
   MeetingIdentity,
   Recording,
   SourceFilter,
-  DownloadQueueItem,
 } from "./types";
 
 import { safeString as S } from "./utils/recordingFormatters";
@@ -54,7 +53,7 @@ const App: React.FC = () => {
   const [from, setFrom] = useState(todayStr);
   const [to, setTo] = useState(todayStr);
   const [pageSize, setPageSize] = useState<number>(100);
-  const [source, setSource] = useState<SourceFilter>("phone");
+  const source: SourceFilter = "meetings";
   const [query, setQuery] = useState<string>("");
   const [pageIndex, setPageIndex] = useState<number>(0);
   const [deleting, setDeleting] = useState(false);
@@ -856,56 +855,6 @@ const clearAllDlQueue = useCallback(() => {
                   value={to}
                   onChange={(e) => setTo(e.target.value)}
                 />
-              </div>
-
-              {/* Source toggle */}
-              <div className="filter-group">
-                <label className="filter-label">Source</label>
-                <div className="toggle-pill-group">
-                  <button
-                    type="button"
-                    className={
-                      "toggle-pill" +
-                      (source === "phone" ? " toggle-pill-active" : "")
-                    }
-                    onClick={() => {
-                      setSource("phone");
-                      setPageIndex(0);
-                      clearSelection();
-                      setAutoDeleteFilter("all");
-                    }}
-                  >
-                    Phone
-                  </button>
-                  <button
-                    type="button"
-                    className={
-                      "toggle-pill" +
-                      (source === "meetings" ? " toggle-pill-active" : "")
-                    }
-                    onClick={() => {
-                      setSource("meetings");
-                      setPageIndex(0);
-                      clearSelection();
-                    }}
-                  >
-                    Meetings
-                  </button>
-                  <button
-                    type="button"
-                    className={
-                      "toggle-pill" + (source === "cc" ? " toggle-pill-active" : "")
-                    }
-                    onClick={() => {
-                      setSource("cc");
-                      setPageIndex(0);
-                      clearSelection();
-                      setAutoDeleteFilter("all"); // irrelevant for cc but harmless
-                    }}
-                  >
-                    Contact Center
-                  </button>
-                </div>
               </div>
 
               {/* Auto-delete toggle (meetings only) */}
