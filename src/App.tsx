@@ -118,23 +118,26 @@ const App: React.FC = () => {
   const matchesQuery = useCallback(
     (rec: Recording): boolean => {
       if (!normalizedQuery) return true;
-
+  
       const haystack =
         [
           rec.topic,
           rec.owner?.name,
-          rec.owner?.email,
           rec.host_email,
           rec.host_name,
+          // optional meeting-ish extras if your Recording type has them
+          (rec as any).host_id,
+          (rec as any).meetingId,
         ]
           .map(S)
           .join(" ")
           .toLowerCase() || "";
-
+  
       return haystack.includes(normalizedQuery);
     },
     [normalizedQuery]
   );
+
 
   // auto-delete filter (meetings only)
   const [autoDeleteFilter, setAutoDeleteFilter] = useState<"all" | "auto" | "manual">("all");
