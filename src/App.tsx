@@ -1,9 +1,4 @@
-import React, {
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-} from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import AppHeader from "./components/AppHeader";
 import RecordingsTable from "./components/RecordingsTable";
 import useOwnerGroups, { type PageRecord } from "./hooks/useOwnerGroups";
@@ -15,6 +10,7 @@ import type {
   MeetingIdentity,
   Recording,
   SourceFilter,
+  DownloadQueueItem,
 } from "./types";
 
 import { safeString as S } from "./utils/recordingFormatters";
@@ -37,7 +33,7 @@ const datePart = (iso?: string) => {
 };
 
 const todayStr = new Date().toISOString().slice(0, 10);
-const QUEUE_LS_KEY = "download_queue_v2";
+const QUEUE_LS_KEY = "download_queue_meetings_only_v1";
 
 const useInitialDemoMode = (): boolean => {
   if (typeof window === "undefined") return false;
@@ -49,156 +45,75 @@ const useInitialDemoMode = (): boolean => {
   }
 };
 
+type MeetingAnalyticsMap = Record<string, MeetingAnalyticsStats | undefined>;
+
 const App: React.FC = () => {
   const [from, setFrom] = useState(todayStr);
   const [to, setTo] = useState(todayStr);
   const [pageSize, setPageSize] = useState<number>(100);
+
+  // ✅ Meetings-only
   const source: SourceFilter = "meetings";
+
   const [query, setQuery] = useState<string>("");
   const [pageIndex, setPageIndex] = useState<number>(0);
   const [deleting, setDeleting] = useState(false);
-  const [deleteProgress, setDeleteProgress] =
-    useState<DeleteProgress | null>(null);
+  const [deleteProgress, setDeleteProgress] = useState<DeleteProgress | null>(null);
   const [deleteMessage, setDeleteMessage] = useState<string | null>(null);
-  const [meetingIdentity, setMeetingIdentity] =
-    useState<MeetingIdentity | null>(null);
+  const [meetingIdentity, setMeetingIdentity] = useState<MeetingIdentity | null>(null);
   const [demoMode] = useState<boolean>(() => useInitialDemoMode());
-  // ---- Meeting analytics (plays/downloads/last access) ----
-type MeetingAnalyticsMap = Record<string, MeetingAnalyticsStats | undefined>;
 
-const [analyticsByMeetingId, setAnalyticsByMeetingId] =
-  useState<MeetingAnalyticsMap>({});
+  // ---- Meeting analytics map ----
+  const [analyticsByMeetingId, setAnalyticsByMeetingId] = useState<MeetingAnalyticsMap>({});
 
+  // ---------------- DOWNLOAD QUEUE (meetings-only) ----------------
+  const [dlQueue, setDlQueue] = useState<DownloadQueueItem[]>([]);
+  const [dlQueueOpen, setDlQueueOpen] = useState(false);
+  const [dlQueueRunning, setDlQueueRunning] = useState(false);
 
-  // ---------------- DOWNLOAD QUEUE (unified) ----------------
-const [dlQueue, setDlQueue] = useState<DownloadQueueItem[]>([]);
-const [dlQueueOpen, setDlQueueOpen] = useState(false);
-const [dlQueueRunning, setDlQueueRunning] = useState(false);
+  const dlQueueRef = React.useRef<DownloadQueueItem[]>([]);
+  useEffect(() => {
+    dlQueueRef.current = dlQueue;
+  }, [dlQueue]);
 
-const dlQueueRef = React.useRef<DownloadQueueItem[]>([]);
-useEffect(() => {
-  dlQueueRef.current = dlQueue;
-}, [dlQueue]);
+  const dlQueueRunningRef = React.useRef(false);
+  useEffect(() => {
+    dlQueueRunningRef.current = dlQueueRunning;
+  }, [dlQueueRunning]);
 
-const dlQueueRunningRef = React.useRef(false);
-useEffect(() => {
-  dlQueueRunningRef.current = dlQueueRunning;
-}, [dlQueueRunning]);
-
-// load queue from localStorage (once)
-useEffect(() => {
-  try {
-    const raw = localStorage.getItem(QUEUE_LS_KEY);
-    if (raw) setDlQueue(JSON.parse(raw));
-  } catch {
-    // ignore
-  }
-}, []);
-
-// persist queue
-useEffect(() => {
-  try {
-    localStorage.setItem(QUEUE_LS_KEY, JSON.stringify(dlQueue));
-  } catch {
-    // ignore
-  }
-}, [dlQueue]);
-
-// small concurrency limiter (no deps)
-const runLimited = useCallback(async <T,>(
-  items: T[],
-  limit: number,
-  worker: (item: T) => Promise<void>
-) => {
-  const concurrency = Math.max(1, Math.floor(limit || 1));
-  let idx = 0;
-
-  const runners = Array.from(
-    { length: Math.min(concurrency, items.length) },
-    async () => {
-      while (idx < items.length) {
-        const i = idx++;
-        await worker(items[i]);
-      }
-    }
-  );
-
-  await Promise.all(runners);
-}, []);
-
-const fetchMeetingAnalyticsSummary = useCallback(
-  async (
-    meetingId: string,
-    fromStr: string,
-    toStr: string
-  ): Promise<MeetingAnalyticsStats | null> => {
+  // load queue from localStorage (once)
+  useEffect(() => {
     try {
-      const params = new URLSearchParams();
-      params.set("meetingId", meetingId);
-      params.set("from", fromStr);
-      params.set("to", toStr);
-
-      const res = await fetch(
-        `/api/meeting/recordings/analytics_summary?${params.toString()}`
-      );
-      if (!res.ok) return null;
-
-      const json = await res.json();
-
-      if (!json?.ok) return null;
-
-      return {
-        meetingId,
-        plays: Number(json.plays ?? 0),
-        downloads: Number(json.downloads ?? 0),
-        lastAccessDate: String(json.lastAccessDate ?? ""),
-      };
+      const raw = localStorage.getItem(QUEUE_LS_KEY);
+      if (raw) setDlQueue(JSON.parse(raw));
     } catch {
-      return null;
+      // ignore
     }
-  },
-  []
-);
+  }, []);
 
-  // auto-delete filter (meetings only)
-  const [autoDeleteFilter, setAutoDeleteFilter] = useState<
-    "all" | "auto" | "manual"
-  >("all");
+  // persist queue
+  useEffect(() => {
+    try {
+      localStorage.setItem(QUEUE_LS_KEY, JSON.stringify(dlQueue));
+    } catch {
+      // ignore
+    }
+  }, [dlQueue]);
 
-  // modal state
-  const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [pendingDelete, setPendingDelete] = useState<Recording[]>([]);
+  // ---------------- Recordings fetch hook ----------------
+  const { data, recordings, loading, error, handleSearch, fetchRecordings, setData } =
+    useRecordings(from, to, pageSize, source, demoMode);
 
-  const {
-    data,
-    recordings,
-    loading,
-    error,
-    handleSearch,
-    fetchRecordings,
-    setData,
-  } = useRecordings(from, to, pageSize, source, demoMode);
-
-  const {
-    selectedKeys,
-    setSelectedKeys,
-    clearSelection,
-    toggleSelection,
-    applySelection,
-  } = useSelection();
+  // ---------------- Selection ----------------
+  const { selectedKeys, setSelectedKeys, clearSelection, toggleSelection, applySelection } =
+    useSelection();
 
   const normalizedQuery = query.trim().toLowerCase();
 
   const makeRecordKey = useCallback((rec: Recording, idx: number): string => {
-      if (rec.source === "meetings") {
-        return `m|${rec.meetingId ?? ""}|${rec.id ?? idx}`;
-      }
-      if (rec.source === "cc") {
-        return `c|${rec.id ?? idx}`;
-      }
-      return `p|${rec.id ?? idx}`;
-    }, []);
-
+    // meetings-only
+    return `m|${rec.meetingId ?? ""}|${rec.id ?? idx}`;
+  }, []);
 
   const matchesQuery = useCallback(
     (rec: Recording): boolean => {
@@ -206,12 +121,9 @@ const fetchMeetingAnalyticsSummary = useCallback(
 
       const haystack =
         [
-          rec.caller_name,
-          rec.caller_number,
-          rec.callee_name,
-          rec.callee_number,
-          rec.owner?.name,
           rec.topic,
+          rec.owner?.name,
+          rec.owner?.email,
           rec.host_email,
           rec.host_name,
         ]
@@ -224,13 +136,14 @@ const fetchMeetingAnalyticsSummary = useCallback(
     [normalizedQuery]
   );
 
+  // auto-delete filter (meetings only)
+  const [autoDeleteFilter, setAutoDeleteFilter] = useState<"all" | "auto" | "manual">("all");
+
   const filteredRecordings = useMemo(
     () =>
       recordings
         .filter(matchesQuery)
         .filter((rec) => {
-          if (source !== "meetings") return true;
-
           if (autoDeleteFilter === "all") return true;
 
           const val: boolean | null | undefined =
@@ -241,19 +154,18 @@ const fetchMeetingAnalyticsSummary = useCallback(
 
           return true;
         }),
-    [matchesQuery, recordings, source, autoDeleteFilter]
+    [matchesQuery, recordings, autoDeleteFilter]
   );
 
+  // ---------------- Pagination ----------------
   const effectivePageSize = pageSize || 100;
   const totalFiltered = filteredRecordings.length;
-  const totalPages = totalFiltered
-    ? Math.ceil(totalFiltered / effectivePageSize)
-    : 1;
-  const safePageIndex =
-    pageIndex >= totalPages ? Math.max(0, totalPages - 1) : pageIndex;
+  const totalPages = totalFiltered ? Math.ceil(totalFiltered / effectivePageSize) : 1;
 
+  const safePageIndex = pageIndex >= totalPages ? Math.max(0, totalPages - 1) : pageIndex;
   const pageStart = safePageIndex * effectivePageSize;
   const pageEnd = pageStart + effectivePageSize;
+
   const pageRecords = filteredRecordings.slice(pageStart, pageEnd);
 
   const pageRecordsWithIndex: PageRecord[] = useMemo(
@@ -274,68 +186,9 @@ const fetchMeetingAnalyticsSummary = useCallback(
     [filteredRecordings, makeRecordKey, selectedKeys]
   );
 
-  useEffect(() => {
-  if (demoMode) return;
-  if (source !== "meetings") return;
-
-  const fromStr = data?.from ?? from;
-  const toStr = data?.to ?? to;
-
-  const meetingIds = Array.from(
-    new Set(
-      pageRecords
-        .map((r) => r.meetingId)
-        .filter((id): id is string => typeof id === "string" && id.length > 0)
-    )
-  );
-
-  if (!meetingIds.length) return;
-
-  let cancelled = false;
-
-  (async () => {
-    const missing = meetingIds.filter((id) => analyticsByMeetingId[id] == null);
-    if (!missing.length) return;
-
-    await runLimited(missing, 6, async (id) => {
-      const stats = await fetchMeetingAnalyticsSummary(id, fromStr, toStr);
-      if (cancelled) return;
-
-      setAnalyticsByMeetingId((prev) => ({
-        ...prev,
-        [id]:
-          stats ??
-          ({
-            meetingId: id,
-            plays: 0,
-            downloads: 0,
-            lastAccessDate: "",
-          } as MeetingAnalyticsStats),
-      }));
-    });
-  })();
-
-  return () => {
-    cancelled = true;
-  };
-}, [
-  demoMode,
-  source,
-  from,
-  to,
-  data?.from,
-  data?.to,
-  pageRecords,
-  analyticsByMeetingId,
-  runLimited,
-  fetchMeetingAnalyticsSummary,
-]);
-
   const allOnPageSelected =
     pageRecords.length > 0 &&
-    pageRecords.every((rec, idx) =>
-      selectedKeys.has(makeRecordKey(rec, pageStart + idx))
-    );
+    pageRecords.every((rec, idx) => selectedKeys.has(makeRecordKey(rec, pageStart + idx)));
 
   const toggleRowSelection = (rec: Recording, globalIndex: number) => {
     const key = makeRecordKey(rec, globalIndex);
@@ -343,12 +196,11 @@ const fetchMeetingAnalyticsSummary = useCallback(
   };
 
   const selectAllOnPage = (checked: boolean) => {
-    const keys = pageRecords.map((rec, idx) =>
-      makeRecordKey(rec, pageStart + idx)
-    );
+    const keys = pageRecords.map((rec, idx) => makeRecordKey(rec, pageStart + idx));
     applySelection(keys, checked);
   };
 
+  // ---------------- Grouping ----------------
   const {
     ownerGroups,
     collapseAllGroups,
@@ -357,357 +209,320 @@ const fetchMeetingAnalyticsSummary = useCallback(
     toggleGroupCollapse,
     isGroupFullySelected,
     toggleGroupSelection,
-  } = useOwnerGroups(
-    pageRecordsWithIndex,
-    makeRecordKey,
-    selectedKeys,
-    setSelectedKeys
-  );
+  } = useOwnerGroups(pageRecordsWithIndex, makeRecordKey, selectedKeys, setSelectedKeys);
 
+  // ---------------- Meeting identity ----------------
   useEffect(() => {
     const loadMeetingIdentity = async () => {
       try {
         const res = await fetch("/api/meeting/identity");
         if (!res.ok) return;
-
         const json = (await res.json()) as MeetingIdentity;
         setMeetingIdentity(json);
       } catch {
         // ignore
       }
     };
-
     loadMeetingIdentity();
   }, []);
 
+  // ---------------- Search ----------------
   const onSearch = () => {
     setPageIndex(0);
     clearSelection();
     handleSearch();
   };
 
-  const handlePrevPage = () => {
-    setPageIndex((idx) => Math.max(0, idx - 1));
-  };
+  const handlePrevPage = () => setPageIndex((idx) => Math.max(0, idx - 1));
+  const handleNextPage = () => setPageIndex((idx) => (idx + 1 < totalPages ? idx + 1 : idx));
 
-  const handleNextPage = () => {
-    setPageIndex((idx) => (idx + 1 < totalPages ? idx + 1 : idx));
-  };
+  // ---------------- Analytics fetch (meetings) ----------------
 
- // -------------------- Download queue builders (unified) --------------------
+  // small concurrency limiter (no deps)
+  const runLimited = useCallback(async <T,>(
+    items: T[],
+    limit: number,
+    worker: (item: T) => Promise<void>
+  ) => {
+    const concurrency = Math.max(1, Math.floor(limit || 1));
+    let idx = 0;
 
-const buildCcQueueItemsFromSelection = useCallback((): DownloadQueueItem[] => {
-  if (source !== "cc") return [];
-
-  const selected = filteredRecordings.filter((rec, idx) =>
-    selectedKeys.has(makeRecordKey(rec, idx))
-  );
-
-  const items: DownloadQueueItem[] = [];
-
-  for (const rec of selected) {
-    const rid = (rec.cc_recording_id || rec.id || "").trim();
-    if (!rid) continue;
-
-    const startIso = rec.date_time || rec.end_time || "";
-    const d = datePart(startIso);
-
-    const agent = safeFilePart(
-      rec.cc_agent_name || rec.callee_name || rec.owner?.name || "agent"
-    );
-    const caller = safeFilePart(
-      rec.cc_consumer_name || rec.caller_name || "caller"
-    );
-
-    if (rec.cc_download_url) {
-      items.push({
-        key: `cc|${rid}|recording`,
-        source: "cc",
-        kind: "recording",
-        url: rec.cc_download_url,
-        filename: `CC_${d}_${agent}_${caller}_${safeFilePart(rid, 24)}.mp4`,
-        status: "queued",
-        attempts: 0,
-      });
-    }
-
-    if (rec.cc_transcript_url) {
-      items.push({
-        key: `cc|${rid}|transcript`,
-        source: "cc",
-        kind: "transcript",
-        url: rec.cc_transcript_url,
-        filename: `CC_${d}_${agent}_${caller}_${safeFilePart(rid, 24)}.vtt`,
-        status: "queued",
-        attempts: 0,
-      });
-    }
-  }
-
-  return items;
-}, [source, filteredRecordings, selectedKeys, makeRecordKey]);
-
-const buildPhoneQueueItemsFromSelection = useCallback((): DownloadQueueItem[] => {
-  if (source !== "phone") return [];
-
-  const selected = filteredRecordings.filter((rec, idx) =>
-    selectedKeys.has(makeRecordKey(rec, idx))
-  );
-
-  const items: DownloadQueueItem[] = [];
-
-  for (const rec of selected) {
-    const url = rec.download_url;
-    if (!url) continue;
-
-    const d = datePart(rec.date_time);
-    const caller = safeFilePart(rec.caller_name || rec.caller_number || "caller");
-    const callee = safeFilePart(rec.callee_name || rec.callee_number || "callee");
-    const rid = safeFilePart(rec.id, 24);
-
-    items.push({
-      key: `phone|${rec.id}|recording`,
-      source: "phone",
-      kind: "recording",
-      url,
-      filename: `PHONE_${d}_${caller}_${callee}_${rid}.mp3`,
-      status: "queued",
-      attempts: 0,
-    });
-  }
-
-  return items;
-}, [source, filteredRecordings, selectedKeys, makeRecordKey]);
-
-const buildMeetingsQueueItemsFromSelection = useCallback((): DownloadQueueItem[] => {
-  if (source !== "meetings") return [];
-
-  const selected = filteredRecordings.filter((rec, idx) =>
-    selectedKeys.has(makeRecordKey(rec, idx))
-  );
-
-  const items: DownloadQueueItem[] = [];
-
-  for (const rec of selected) {
-    const files = rec.recording_files || [];
-    if (!files.length) continue;
-
-    const d = datePart(rec.date_time);
-    const host = safeFilePart(
-      rec.host_email || rec.host_name || rec.owner?.name || "host"
-    );
-    const topic = safeFilePart(rec.topic || "meeting", 50);
-    const mid = safeFilePart(rec.meetingId || rec.id, 24);
-
-    for (const f of files) {
-      const url = f.download_url;
-      if (!url) continue;
-
-      const kind = String(f.file_type || f.recording_type || "FILE").toUpperCase();
-      const ext = String(f.file_extension || kind || "dat").toLowerCase();
-
-      items.push({
-        key: `mtg|${rec.meetingId || rec.id}|${f.id || safeFilePart(url, 20)}|${kind}`,
-        source: "meetings",
-        kind,
-        url,
-        filename: `MTG_${d}_${host}_${topic}_${mid}_${kind}.${ext}`,
-        status: "queued",
-        attempts: 0,
-      });
-    }
-  }
-
-  return items;
-}, [source, filteredRecordings, selectedKeys, makeRecordKey]);
-
-const buildQueueItemsFromSelection = useCallback((): DownloadQueueItem[] => {
-  if (source === "cc") return buildCcQueueItemsFromSelection();
-  if (source === "phone") return buildPhoneQueueItemsFromSelection();
-  if (source === "meetings") return buildMeetingsQueueItemsFromSelection();
-  return [];
-}, [
-  source,
-  buildCcQueueItemsFromSelection,
-  buildPhoneQueueItemsFromSelection,
-  buildMeetingsQueueItemsFromSelection,
-]);
-
-const addSelectedToQueue = useCallback(() => {
-  const newItems = buildQueueItemsFromSelection();
-  if (!newItems.length) return;
-
-  setDlQueue((prev) => {
-    const existing = new Set(prev.map((x) => x.key));
-    const merged = [...prev];
-    for (const it of newItems) {
-      if (!existing.has(it.key)) merged.push(it);
-    }
-    return merged;
-  });
-
-  setDlQueueOpen(true);
-}, [buildQueueItemsFromSelection]);
-
-// -------------------- Queue counts + active item --------------------
-
-const dlCounts = useMemo(() => {
-  const total = dlQueue.length;
-  const done = dlQueue.filter((x) => x.status === "done").length;
-  const failed = dlQueue.filter((x) => x.status === "failed").length;
-  const downloading = dlQueue.filter((x) => x.status === "downloading").length;
-  const queued = dlQueue.filter((x) => x.status === "queued").length;
-  return { total, done, failed, downloading, queued };
-}, [dlQueue]);
-
-const activeDownload = useMemo(
-  () => dlQueue.find((x) => x.status === "downloading") || null,
-  [dlQueue]
-);
-
-// -------------------- Download action + runner --------------------
-
-const downloadQueueItem = useCallback(async (item: DownloadQueueItem) => {
-  const base =
-    item.source === "cc"
-      ? "/api/contact_center/recordings/download"
-      : item.source === "phone"
-      ? "/api/phone/recordings/download"
-      : "/api/meeting/recordings/download";
-
-  const href =
-    `${base}?url=${encodeURIComponent(item.url)}` +
-    `&filename=${encodeURIComponent(item.filename)}`;
-
-  const res = await fetch(href);
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    const err: any = new Error(
-      `HTTP ${res.status}${text ? `: ${text.slice(0, 160)}` : ""}`
-    );
-    err.status = res.status;
-    throw err;
-  }
-
-  const blob = await res.blob();
-  const blobUrl = URL.createObjectURL(blob);
-
-  const a = document.createElement("a");
-  a.href = blobUrl;
-  a.download = item.filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-
-  URL.revokeObjectURL(blobUrl);
-}, []);
-
-const runDlQueue = useCallback(async () => {
-  if (demoMode) return;
-  if (dlQueueRunningRef.current) return;
-
-  const MAX_ATTEMPTS = 3;
-  const isFatalStatus = (code?: number) => code === 404 || code === 401 || code === 403;
-
-  dlQueueRunningRef.current = true;
-  setDlQueueRunning(true);
-
-  try {
-    while (dlQueueRunningRef.current) {
-      const next = dlQueueRef.current.find(
-        (x) =>
-          (x.status === "queued" || x.status === "failed") &&
-          (x.attempts ?? 0) < MAX_ATTEMPTS
-      );
-
-      if (!next) break;
-
-      setDlQueue((prev) =>
-        prev.map((x) =>
-          x.key === next.key
-            ? { ...x, status: "downloading", error: undefined }
-            : x
-        )
-      );
-
-      try {
-        await downloadQueueItem(next);
-
-        setDlQueue((prev) =>
-          prev.map((x) => (x.key === next.key ? { ...x, status: "done" } : x))
-        );
-      } catch (e: any) {
-        const code = Number(e?.status || 0) || undefined;
-        const msg = e?.message || String(e);
-
-        setDlQueue((prev) =>
-          prev.map((x) => {
-            if (x.key !== next.key) return x;
-
-            const attempts = (x.attempts ?? 0) + 1;
-            const fatal = isFatalStatus(code);
-            const maxed = attempts >= MAX_ATTEMPTS;
-
-            return {
-              ...x,
-              attempts,
-              status: "failed",
-              error:
-                (fatal
-                  ? `Fatal (${code})`
-                  : maxed
-                  ? "Max retries reached"
-                  : "Failed") + `: ${msg}`,
-            };
-          })
-        );
-
-        // If fatal, force it to max so it won't be picked again
-        if (isFatalStatus(code)) {
-          setDlQueue((prev) =>
-            prev.map((x) =>
-              x.key === next.key ? { ...x, attempts: MAX_ATTEMPTS } : x
-            )
-          );
-        }
+    const runners = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+      while (idx < items.length) {
+        const i = idx++;
+        await worker(items[i]);
       }
+    });
 
-      await new Promise((r) => setTimeout(r, 250));
+    await Promise.all(runners);
+  }, []);
+
+  const fetchMeetingAnalyticsSummary = useCallback(
+    async (meetingId: string, fromStr: string, toStr: string): Promise<MeetingAnalyticsStats | null> => {
+      try {
+        const params = new URLSearchParams();
+        params.set("meetingId", meetingId);
+        params.set("from", fromStr);
+        params.set("to", toStr);
+
+        const res = await fetch(`/api/meeting/recordings/analytics_summary?${params.toString()}`);
+        if (!res.ok) return null;
+
+        const json = await res.json();
+        if (!json?.ok) return null;
+
+        return {
+          meetingId,
+          plays: Number(json.plays ?? 0),
+          downloads: Number(json.downloads ?? 0),
+          lastAccessDate: String(json.lastAccessDate ?? ""),
+        };
+      } catch {
+        return null;
+      }
+    },
+    []
+  );
+
+  useEffect(() => {
+    if (demoMode) return;
+
+    const fromStr = data?.from ?? from;
+    const toStr = data?.to ?? to;
+
+    const meetingIds = Array.from(
+      new Set(
+        pageRecords
+          .map((r) => r.meetingId)
+          .filter((id): id is string => typeof id === "string" && id.length > 0)
+      )
+    );
+
+    if (!meetingIds.length) return;
+
+    let cancelled = false;
+
+    (async () => {
+      const missing = meetingIds.filter((id) => analyticsByMeetingId[id] == null);
+      if (!missing.length) return;
+
+      await runLimited(missing, 6, async (id) => {
+        const stats = await fetchMeetingAnalyticsSummary(id, fromStr, toStr);
+        if (cancelled) return;
+
+        setAnalyticsByMeetingId((prev) => ({
+          ...prev,
+          [id]:
+            stats ??
+            ({
+              meetingId: id,
+              plays: 0,
+              downloads: 0,
+              lastAccessDate: "",
+            } as MeetingAnalyticsStats),
+        }));
+      });
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    demoMode,
+    from,
+    to,
+    data?.from,
+    data?.to,
+    pageRecords,
+    analyticsByMeetingId,
+    runLimited,
+    fetchMeetingAnalyticsSummary,
+  ]);
+
+  // ---------------- Download queue (meetings-only) ----------------
+
+  const buildMeetingsQueueItemsFromSelection = useCallback((): DownloadQueueItem[] => {
+    const selected = filteredRecordings.filter((rec, idx) => selectedKeys.has(makeRecordKey(rec, idx)));
+    const items: DownloadQueueItem[] = [];
+
+    for (const rec of selected) {
+      const files = rec.recording_files || [];
+      if (!files.length) continue;
+
+      const d = datePart(rec.date_time);
+      const host = safeFilePart(rec.host_email || rec.host_name || rec.owner?.name || "host");
+      const topic = safeFilePart(rec.topic || "meeting", 50);
+      const mid = safeFilePart(rec.meetingId || rec.id, 24);
+
+      for (const f of files) {
+        const url = f.download_url;
+        if (!url) continue;
+
+        const kind = String(f.file_type || f.recording_type || "FILE").toUpperCase();
+        const ext = String(f.file_extension || kind || "dat").toLowerCase();
+
+        items.push({
+          key: `mtg|${rec.meetingId || rec.id}|${f.id || safeFilePart(url, 20)}|${kind}`,
+          source: "meetings",
+          kind,
+          url,
+          filename: `MTG_${d}_${host}_${topic}_${mid}_${kind}.${ext}`,
+          status: "queued",
+          attempts: 0,
+        });
+      }
     }
-  } finally {
+
+    return items;
+  }, [filteredRecordings, selectedKeys, makeRecordKey]);
+
+  const addSelectedToQueue = useCallback(() => {
+    const newItems = buildMeetingsQueueItemsFromSelection();
+    if (!newItems.length) return;
+
+    setDlQueue((prev) => {
+      const existing = new Set(prev.map((x) => x.key));
+      const merged = [...prev];
+      for (const it of newItems) {
+        if (!existing.has(it.key)) merged.push(it);
+      }
+      return merged;
+    });
+
+    setDlQueueOpen(true);
+  }, [buildMeetingsQueueItemsFromSelection]);
+
+  const dlCounts = useMemo(() => {
+    const total = dlQueue.length;
+    const done = dlQueue.filter((x) => x.status === "done").length;
+    const failed = dlQueue.filter((x) => x.status === "failed").length;
+    const downloading = dlQueue.filter((x) => x.status === "downloading").length;
+    const queued = dlQueue.filter((x) => x.status === "queued").length;
+    return { total, done, failed, downloading, queued };
+  }, [dlQueue]);
+
+  const activeDownload = useMemo(
+    () => dlQueue.find((x) => x.status === "downloading") || null,
+    [dlQueue]
+  );
+
+  const downloadQueueItem = useCallback(async (item: DownloadQueueItem) => {
+    const base = "/api/meeting/recordings/download";
+    const href =
+      `${base}?url=${encodeURIComponent(item.url)}` +
+      `&filename=${encodeURIComponent(item.filename)}`;
+
+    const res = await fetch(href);
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      const err: any = new Error(`HTTP ${res.status}${text ? `: ${text.slice(0, 160)}` : ""}`);
+      err.status = res.status;
+      throw err;
+    }
+
+    const blob = await res.blob();
+    const blobUrl = URL.createObjectURL(blob);
+
+    const a = document.createElement("a");
+    a.href = blobUrl;
+    a.download = item.filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+
+    URL.revokeObjectURL(blobUrl);
+  }, []);
+
+  const runDlQueue = useCallback(async () => {
+    if (demoMode) return;
+    if (dlQueueRunningRef.current) return;
+
+    const MAX_ATTEMPTS = 3;
+    const isFatalStatus = (code?: number) => code === 404 || code === 401 || code === 403;
+
+    dlQueueRunningRef.current = true;
+    setDlQueueRunning(true);
+
+    try {
+      while (dlQueueRunningRef.current) {
+        const next = dlQueueRef.current.find(
+          (x) => (x.status === "queued" || x.status === "failed") && (x.attempts ?? 0) < MAX_ATTEMPTS
+        );
+
+        if (!next) break;
+
+        setDlQueue((prev) =>
+          prev.map((x) => (x.key === next.key ? { ...x, status: "downloading", error: undefined } : x))
+        );
+
+        try {
+          await downloadQueueItem(next);
+
+          setDlQueue((prev) =>
+            prev.map((x) => (x.key === next.key ? { ...x, status: "done" } : x))
+          );
+        } catch (e: any) {
+          const code = Number(e?.status || 0) || undefined;
+          const msg = e?.message || String(e);
+
+          setDlQueue((prev) =>
+            prev.map((x) => {
+              if (x.key !== next.key) return x;
+
+              const attempts = (x.attempts ?? 0) + 1;
+              const fatal = isFatalStatus(code);
+              const maxed = attempts >= MAX_ATTEMPTS;
+
+              return {
+                ...x,
+                attempts,
+                status: "failed",
+                error:
+                  (fatal ? `Fatal (${code})` : maxed ? "Max retries reached" : "Failed") + `: ${msg}`,
+              };
+            })
+          );
+
+          if (isFatalStatus(code)) {
+            setDlQueue((prev) => prev.map((x) => (x.key === next.key ? { ...x, attempts: MAX_ATTEMPTS } : x)));
+          }
+        }
+
+        await new Promise((r) => setTimeout(r, 250));
+      }
+    } finally {
+      dlQueueRunningRef.current = false;
+      setDlQueueRunning(false);
+    }
+  }, [demoMode, downloadQueueItem]);
+
+  const pauseDlQueue = useCallback(() => {
     dlQueueRunningRef.current = false;
     setDlQueueRunning(false);
-  }
-}, [demoMode, downloadQueueItem]);
+  }, []);
 
-const pauseDlQueue = useCallback(() => {
-  dlQueueRunningRef.current = false;
-  setDlQueueRunning(false);
-}, []);
-
-const retryFailedDlQueue = useCallback(() => {
-  setDlQueue((prev) =>
-    prev.map((x) =>
-      x.status === "failed" ? { ...x, status: "queued", error: undefined } : x
-    )
-  );
-}, []);
-
-const clearDoneDlQueue = useCallback(() => {
-  setDlQueue((prev) => prev.filter((x) => x.status !== "done"));
-}, []);
-
-const clearAllDlQueue = useCallback(() => {
-  dlQueueRunningRef.current = false;
-  setDlQueue([]);
-  setDlQueueRunning(false);
-}, []);
-
-  // open the modal with current selection
-  const openDeleteModal = () => {
-    const toDelete = filteredRecordings.filter((rec, idx) =>
-      selectedKeys.has(makeRecordKey(rec, idx))
+  const retryFailedDlQueue = useCallback(() => {
+    setDlQueue((prev) =>
+      prev.map((x) => (x.status === "failed" ? { ...x, status: "queued", error: undefined } : x))
     );
+  }, []);
+
+  const clearDoneDlQueue = useCallback(() => {
+    setDlQueue((prev) => prev.filter((x) => x.status !== "done"));
+  }, []);
+
+  const clearAllDlQueue = useCallback(() => {
+    dlQueueRunningRef.current = false;
+    setDlQueue([]);
+    setDlQueueRunning(false);
+  }, []);
+
+  // ---------------- Delete modal (meetings-only) ----------------
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<Recording[]>([]);
+
+  const openDeleteModal = () => {
+    const toDelete = filteredRecordings.filter((rec, idx) => selectedKeys.has(makeRecordKey(rec, idx)));
     if (!toDelete.length) return;
     setPendingDelete(toDelete);
     setShowDeleteModal(true);
@@ -742,43 +557,20 @@ const clearAllDlQueue = useCallback(() => {
             await new Promise((resolve) => setTimeout(resolve, 40));
             success += 1;
           } else {
-            if (rec.source === "phone") {
-              if (!rec.id) {
-                throw new Error("Missing recording id for phone recording");
-              }
-              const res = await fetch("/api/phone/recordings/delete", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ recordingId: rec.id }),
-              });
-              if (!res.ok) {
-                const txt = await res.text();
-                console.error("Phone delete failed", res.status, txt);
-                throw new Error(
-                  `Phone delete failed: ${res.status} ${txt || ""}`.trim()
-                );
-              }
-            } else {
-              if (!rec.meetingId) {
-                throw new Error("Missing meetingId for meeting recording");
-              }
-              const res = await fetch("/api/meeting/recordings/delete", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  meetingId: rec.meetingId,
-                  action: "trash",
-                }),
-              });
+            if (!rec.meetingId) throw new Error("Missing meetingId for meeting recording");
 
-              if (!res.ok) {
-                const txt = await res.text();
-                console.error("Meeting delete failed", res.status, txt);
-                throw new Error(
-                  `Meeting delete failed: ${res.status} ${txt || ""}`.trim()
-                );
-              }
+            const res = await fetch("/api/meeting/recordings/delete", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ meetingId: rec.meetingId, action: "trash" }),
+            });
+
+            if (!res.ok) {
+              const txt = await res.text();
+              console.error("Meeting delete failed", res.status, txt);
+              throw new Error(`Meeting delete failed: ${res.status} ${txt || ""}`.trim());
             }
+
             success += 1;
           }
         } catch (err) {
@@ -792,23 +584,13 @@ const clearAllDlQueue = useCallback(() => {
       if (demoMode) {
         setData((prev) => {
           if (!prev || !prev.recordings) return prev;
-          const remaining = prev.recordings.filter(
-            (r) => !toDelete.includes(r)
-          );
-          return {
-            ...prev,
-            recordings: remaining,
-            total_records: remaining.length,
-          };
+          const remaining = prev.recordings.filter((r) => !toDelete.includes(r));
+          return { ...prev, recordings: remaining, total_records: remaining.length };
         });
-        setDeleteMessage(
-          `Demo delete: removed ${success} record(s) from the table.`
-        );
+        setDeleteMessage(`Demo delete: removed ${success} record(s) from the table.`);
         clearSelection();
       } else {
-        setDeleteMessage(
-          `Delete complete: ${success} succeeded, ${failed} failed.`
-        );
+        setDeleteMessage(`Delete complete: ${success} succeeded, ${failed} failed.`);
         clearSelection();
         await fetchRecordings();
       }
@@ -835,7 +617,7 @@ const clearAllDlQueue = useCallback(() => {
       <main className="app-main">
         <div className="app-main-inner">
           <section className="app-card">
-            {/* Row 1: dates + toggles */}
+            {/* Row 1: dates + filters */}
             <div className="filters-row">
               <div className="filter-group">
                 <label className="filter-label">From</label>
@@ -857,49 +639,33 @@ const clearAllDlQueue = useCallback(() => {
                 />
               </div>
 
-              {/* Auto-delete toggle (meetings only) */}
               <div className="filter-group">
                 <label className="filter-label">Auto-delete</label>
                 <div className="toggle-pill-group">
                   <button
                     type="button"
-                    className={
-                      "toggle-pill" +
-                      (autoDeleteFilter === "all" ? " toggle-pill-active" : "")
-                    }
+                    className={"toggle-pill" + (autoDeleteFilter === "all" ? " toggle-pill-active" : "")}
                     onClick={() => setAutoDeleteFilter("all")}
-                    disabled={source !== "meetings"}
                   >
                     All
                   </button>
                   <button
                     type="button"
-                    className={
-                      "toggle-pill" +
-                      (autoDeleteFilter === "auto" ? " toggle-pill-active" : "")
-                    }
+                    className={"toggle-pill" + (autoDeleteFilter === "auto" ? " toggle-pill-active" : "")}
                     onClick={() => setAutoDeleteFilter("auto")}
-                    disabled={source !== "meetings"}
                   >
                     On
                   </button>
                   <button
                     type="button"
-                    className={
-                      "toggle-pill" +
-                      (autoDeleteFilter === "manual"
-                        ? " toggle-pill-active"
-                        : "")
-                    }
+                    className={"toggle-pill" + (autoDeleteFilter === "manual" ? " toggle-pill-active" : "")}
                     onClick={() => setAutoDeleteFilter("manual")}
-                    disabled={source !== "meetings"}
                   >
                     Off
                   </button>
                 </div>
               </div>
 
-              {/* Page size buttons */}
               <div className="filter-group">
                 <label className="filter-label">Page size</label>
                 <div className="toggle-pill-group">
@@ -907,10 +673,7 @@ const clearAllDlQueue = useCallback(() => {
                     <button
                       key={size}
                       type="button"
-                      className={
-                        "toggle-pill" +
-                        (pageSize === size ? " toggle-pill-active" : "")
-                      }
+                      className={"toggle-pill" + (pageSize === size ? " toggle-pill-active" : "")}
                       onClick={() => {
                         setPageSize(size);
                         setPageIndex(0);
@@ -923,7 +686,7 @@ const clearAllDlQueue = useCallback(() => {
               </div>
             </div>
 
-            {/* Row 2: search + delete button */}
+            {/* Row 2: search + actions */}
             <div className="filters-row" style={{ marginTop: 12 }}>
               <div className="filter-group flex-1">
                 <label className="filter-label">Search</label>
@@ -931,7 +694,7 @@ const clearAllDlQueue = useCallback(() => {
                   <input
                     type="text"
                     className="form-control flex-1"
-                    placeholder="Name, number, topic, host email, ..."
+                    placeholder="Topic, host email, owner name…"
                     value={query}
                     onChange={(e) => {
                       setPageIndex(0);
@@ -941,46 +704,38 @@ const clearAllDlQueue = useCallback(() => {
                       if (e.key === "Enter") onSearch();
                     }}
                   />
-                  <button
-                    className="btn-primary"
-                    onClick={onSearch}
-                    disabled={loading}
-                  >
+                  <button className="btn-primary" onClick={onSearch} disabled={loading}>
                     Search
                   </button>
                 </div>
               </div>
-              <div
-                className="flex gap-3 items-end"
-                style={{ alignSelf: "stretch", justifyContent: "flex-end" }}
-              >
-                <div className="flex gap-3 items-end" style={{ alignSelf: "stretch", justifyContent: "flex-end" }}>
-                  <button
-                    className="pager-btn"
-                    onClick={() => setDlQueueOpen((v) => !v)}
-                    disabled={dlCounts.total === 0}
-                    title="Open download queue"
-                  >
-                    Queue ({dlCounts.done}/{dlCounts.total})
-                  </button>
 
-                  <button
-                    className="btn-primary"
-                    onClick={addSelectedToQueue}
-                    disabled={selectedCount === 0 || demoMode}
-                    title={demoMode ? "Queue disabled in demo mode" : "Add selected items to download queue"}
-                  >
-                    Add to download queue
-                  </button>
+              <div className="flex gap-3 items-end" style={{ alignSelf: "stretch", justifyContent: "flex-end" }}>
+                <button
+                  className="pager-btn"
+                  onClick={() => setDlQueueOpen((v) => !v)}
+                  disabled={dlCounts.total === 0}
+                  title="Open download queue"
+                >
+                  Queue ({dlCounts.done}/{dlCounts.total})
+                </button>
 
-                  <button
-                    className="btn-primary"
-                    onClick={openDeleteModal}
-                    disabled={selectedCount === 0 || deleting}
-                  >
-                    Review &amp; delete…
-                  </button>
-                </div>
+                <button
+                  className="btn-primary"
+                  onClick={addSelectedToQueue}
+                  disabled={selectedCount === 0 || demoMode}
+                  title={demoMode ? "Queue disabled in demo mode" : "Add selected meeting files to download queue"}
+                >
+                  Add to download queue
+                </button>
+
+                <button
+                  className="btn-primary"
+                  onClick={openDeleteModal}
+                  disabled={selectedCount === 0 || deleting}
+                >
+                  Review &amp; delete…
+                </button>
               </div>
             </div>
 
@@ -989,19 +744,16 @@ const clearAllDlQueue = useCallback(() => {
               <div className="status-group">
                 <span>
                   {totalFiltered} recording{totalFiltered !== 1 ? "s" : ""}
-                  {data?.total_records != null &&
-                    data.total_records !== totalFiltered && (
-                      <> ({data.total_records} on server)</>
-                    )}
+                  {data?.total_records != null && data.total_records !== totalFiltered && (
+                    <> ({data.total_records} on server)</>
+                  )}
                 </span>
                 <span>
                   {" "}
                   · Page {totalPages ? safePageIndex + 1 : 0} / {totalPages}
                 </span>
                 {error && <span className="error-text">Error: {error}</span>}
-                {deleteMessage && (
-                  <span className="status-text"> · {deleteMessage}</span>
-                )}
+                {deleteMessage && <span className="status-text"> · {deleteMessage}</span>}
               </div>
             </div>
 
@@ -1009,31 +761,14 @@ const clearAllDlQueue = useCallback(() => {
             <div className="actions-row" style={{ marginTop: 8 }}>
               <div className="status-group flex items-center gap-2">
                 <label className="filter-label">Selected</label>
-                <input
-                  className="form-control"
-                  readOnly
-                  value={selectedCount}
-                  style={{ width: 72 }}
-                />
-                <button
-                  className="pager-btn"
-                  onClick={() => setSelectedKeys(new Set())}
-                  disabled={deleting}
-                >
+                <input className="form-control" readOnly value={selectedCount} style={{ width: 72 }} />
+                <button className="pager-btn" onClick={() => setSelectedKeys(new Set())} disabled={deleting}>
                   Clear
                 </button>
-                <button
-                  className="pager-btn"
-                  onClick={expandAllGroups}
-                  disabled={deleting}
-                >
+                <button className="pager-btn" onClick={expandAllGroups} disabled={deleting}>
                   Expand all groups
                 </button>
-                <button
-                  className="pager-btn"
-                  onClick={collapseAllGroups}
-                  disabled={deleting}
-                >
+                <button className="pager-btn" onClick={collapseAllGroups} disabled={deleting}>
                   Collapse all groups
                 </button>
               </div>
@@ -1043,11 +778,7 @@ const clearAllDlQueue = useCallback(() => {
                   <div className="delete-progress-bar">
                     <div
                       className="delete-progress-bar-fill"
-                      style={{
-                        width: `${
-                          (deleteProgress.done / deleteProgress.total) * 100
-                        }%`,
-                      }}
+                      style={{ width: `${(deleteProgress.done / deleteProgress.total) * 100}%` }}
                     />
                   </div>
                   <span className="delete-progress-text">
@@ -1061,24 +792,22 @@ const clearAllDlQueue = useCallback(() => {
             {loading && !recordings.length ? (
               <div className="rec-table-empty">Loading recordings…</div>
             ) : !filteredRecordings.length ? (
-              <div className="rec-table-empty">
-                No recordings match this range/search.
-              </div>
+              <div className="rec-table-empty">No recordings match this range/search.</div>
             ) : (
-                <RecordingsTable
-                  ownerGroups={ownerGroups}
-                  isGroupCollapsed={isGroupCollapsed}
-                  toggleGroupCollapse={toggleGroupCollapse}
-                  isGroupFullySelected={isGroupFullySelected}
-                  toggleGroupSelection={toggleGroupSelection}
-                  makeRecordKey={makeRecordKey}
-                  toggleRowSelection={toggleRowSelection}
-                  selectedKeys={selectedKeys}
-                  selectAllOnPage={selectAllOnPage}
-                  allOnPageSelected={allOnPageSelected}
-                  demoMode={demoMode}
-                  analyticsByMeetingId={analyticsByMeetingId}
-                />
+              <RecordingsTable
+                ownerGroups={ownerGroups}
+                isGroupCollapsed={isGroupCollapsed}
+                toggleGroupCollapse={toggleGroupCollapse}
+                isGroupFullySelected={isGroupFullySelected}
+                toggleGroupSelection={toggleGroupSelection}
+                makeRecordKey={makeRecordKey}
+                toggleRowSelection={toggleRowSelection}
+                selectedKeys={selectedKeys}
+                selectAllOnPage={selectAllOnPage}
+                allOnPageSelected={allOnPageSelected}
+                demoMode={demoMode}
+                analyticsByMeetingId={analyticsByMeetingId}
+              />
             )}
 
             {/* download queue drawer */}
@@ -1141,7 +870,6 @@ const clearAllDlQueue = useCallback(() => {
                     <thead>
                       <tr>
                         <th>Status</th>
-                        <th>Source</th>
                         <th>Type</th>
                         <th>Filename</th>
                         <th>Error</th>
@@ -1156,20 +884,15 @@ const clearAllDlQueue = useCallback(() => {
                             {it.status === "done" && "Done"}
                             {it.status === "failed" && "Failed"}
                           </td>
-                          <td>{it.source}</td>
                           <td>{it.kind}</td>
-                          <td style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}>
-                            {it.filename}
-                          </td>
-                          <td style={{ maxWidth: 420, opacity: 0.85 }}>
-                            {it.status === "failed" ? it.error || "Error" : ""}
-                          </td>
+                          <td style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}>{it.filename}</td>
+                          <td style={{ maxWidth: 420, opacity: 0.85 }}>{it.status === "failed" ? it.error || "Error" : ""}</td>
                         </tr>
                       ))}
 
                       {dlQueue.length > 250 && (
                         <tr className="rec-row">
-                          <td colSpan={5} style={{ opacity: 0.8 }}>
+                          <td colSpan={4} style={{ opacity: 0.8 }}>
                             Showing first 250 queue items (of {dlQueue.length}). Queue will still run all items.
                           </td>
                         </tr>
@@ -1180,15 +903,10 @@ const clearAllDlQueue = useCallback(() => {
               </div>
             )}
 
-
             {/* Bottom pager */}
             <div className="pager" style={{ marginTop: 12 }}>
               <div className="pager-buttons">
-                <button
-                  onClick={handlePrevPage}
-                  disabled={safePageIndex <= 0 || deleting}
-                  className="pager-btn"
-                >
+                <button onClick={handlePrevPage} disabled={safePageIndex <= 0 || deleting} className="pager-btn">
                   Prev page
                 </button>
                 <button
@@ -1212,10 +930,8 @@ const clearAllDlQueue = useCallback(() => {
             <div className="modal-card">
               <h2 className="modal-title">Review &amp; delete recordings</h2>
               <p className="modal-subtitle">
-                You are about to delete{" "}
-                <strong>{pendingDelete.length}</strong> recording
-                {pendingDelete.length !== 1 ? "s" : ""}. This will move them to
-                the Zoom trash (or remove them in demo mode).
+                You are about to delete <strong>{pendingDelete.length}</strong> recording
+                {pendingDelete.length !== 1 ? "s" : ""}. This will move them to the Zoom trash (or remove them in demo mode).
               </p>
 
               <div className="modal-body">
@@ -1223,39 +939,23 @@ const clearAllDlQueue = useCallback(() => {
                   {pendingDelete.slice(0, 5).map((rec, idx) => (
                     <div key={idx} className="modal-list-item">
                       <div className="modal-list-primary">
-                        {rec.date_time
-                          ? new Date(rec.date_time).toLocaleString()
-                          : "—"}{" "}
-                        · {rec.topic || rec.caller_name || "Recording"}
+                        {rec.date_time ? new Date(rec.date_time).toLocaleString() : "—"} ·{" "}
+                        {rec.topic || "Recording"}
                       </div>
-                      <div className="modal-list-meta">
-                        {rec.host_email || rec.owner?.name || "Unknown owner"}
-                      </div>
+                      <div className="modal-list-meta">{rec.host_email || rec.owner?.name || "Unknown owner"}</div>
                     </div>
                   ))}
                   {pendingDelete.length > 5 && (
-                    <div className="modal-list-more">
-                      …and {pendingDelete.length - 5} more
-                    </div>
+                    <div className="modal-list-more">…and {pendingDelete.length - 5} more</div>
                   )}
                 </div>
               </div>
 
               <div className="modal-footer">
-                <button
-                  type="button"
-                  className="pager-btn"
-                  onClick={closeDeleteModal}
-                  disabled={deleting}
-                >
+                <button type="button" className="pager-btn" onClick={closeDeleteModal} disabled={deleting}>
                   Cancel
                 </button>
-                <button
-                  type="button"
-                  className="btn-danger"
-                  onClick={handleConfirmDelete}
-                  disabled={deleting}
-                >
+                <button type="button" className="btn-danger" onClick={handleConfirmDelete} disabled={deleting}>
                   {deleting ? "Deleting…" : "Confirm delete"}
                 </button>
               </div>
